@@ -1,0 +1,19 @@
+# Секреты и локальные данные — не коммитить
+.env
+.env.local
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
