@@ -329,3 +329,17 @@ async def test_prune_snipe_signals_keeps_fresh(db, settings):
 
     # Повторный проход ничего не удаляет (идемпотентно).
     assert await db.prune_snipe_signals(settings.SNIPE_SIGNALS_RETENTION_HOURS) == 0
+
+    # Честная телеметрия: видит свежую сделку и ее возраст.
+    stats = await db.feed_stats(settings.SNIPE_SIGNALS_RETENTION_HOURS)
+    assert stats["total"] == 1
+    assert stats["last_deal_min_ago"] is not None and stats["last_deal_min_ago"] < 5
+
+    # Пустая лента — честный ноль, а не «всё работает».
+    async with db.session() as session:
+        from sqlalchemy import delete
+
+        await session.execute(delete(SnipeSignal))
+    empty = await db.feed_stats(settings.SNIPE_SIGNALS_RETENTION_HOURS)
+    assert empty["total"] == 0
+    assert empty["last_deal_min_ago"] is None

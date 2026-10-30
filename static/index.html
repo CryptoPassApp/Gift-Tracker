@@ -1369,7 +1369,11 @@
                 'profile.healthOk': 'Бэкенд на связи',
                 'profile.healthFail': 'Бэкенд недоступен',
                 'profile.marketOk': 'сканер активен',
-                'profile.marketPause': 'лимит TonAPI: пауза {n} мин'
+                'profile.marketPause': 'лимит TonAPI: пауза {n} мин',
+                'profile.healthScanner': 'Сканер: {n} сек назад',
+                'profile.healthFeed': 'Сделок в ленте: {n}',
+                'profile.healthLastDeal': 'последняя {n} мин назад',
+                'profile.healthNoDeals': 'сделок пока нет — рынок выше флора, лента наполнится автоматически'
             },
             en: {
                 'nav.profile': 'Profile',
@@ -1476,7 +1480,11 @@
                 'profile.healthOk': 'Backend is reachable',
                 'profile.healthFail': 'Backend is unreachable',
                 'profile.marketOk': 'scanner is active',
-                'profile.marketPause': 'TonAPI limit: paused {n} min'
+                'profile.marketPause': 'TonAPI limit: paused {n} min',
+                'profile.healthScanner': 'Scanner: {n}s ago',
+                'profile.healthFeed': 'Deals in feed: {n}',
+                'profile.healthLastDeal': 'last one {n} min ago',
+                'profile.healthNoDeals': 'no deals yet — market above floor, the feed fills automatically'
             }
         };
 
@@ -1718,11 +1726,32 @@
                 const data = await api('/api/health');
                 const bot = data.bot || {};
                 const market = data.market || {};
+                const feed = data.feed || {};
                 const cooldown = Number(market.tonapi_cooldown_sec || 0);
-                let text = t('profile.healthOk') + ' · ' + (bot.alive ? t('profile.marketOk') : 'bot offline');
-                if (cooldown > 0) text += ' · ' + t('profile.marketPause', { n: Math.ceil(cooldown / 60) });
-                out.textContent = text;
-                out.className = 'text-[11px] font-medium text-[#00E676] mt-2.5 leading-snug';
+
+                const parts = [t('profile.healthOk')];
+                if (bot.alive && bot.scanner_last_scan) {
+                    const scanAgeSec = Math.max(0, Math.round((Date.now() - new Date(bot.scanner_last_scan + (bot.scanner_last_scan.endsWith('Z') ? '' : 'Z')).getTime()) / 1000));
+                    parts.push(t('profile.healthScanner', { n: scanAgeSec }));
+                } else if (!bot.alive) {
+                    parts.push('bot offline');
+                }
+                const deals = Number(feed.total || 0);
+                if (deals > 0) {
+                    parts.push(t('profile.healthFeed', { n: deals }));
+                    const lastMin = Number(feed.last_deal_min_ago);
+                    if (!Number.isNaN(lastMin) && lastMin !== null) {
+                        parts.push(t('profile.healthLastDeal', { n: Math.round(lastMin) }));
+                    }
+                } else {
+                    parts.push(t('profile.healthNoDeals'));
+                }
+                if (cooldown > 0) parts.push(t('profile.marketPause', { n: Math.ceil(cooldown / 60) }));
+
+                out.textContent = parts.join(' · ');
+                // Зеленый = есть сделки; желтый = живы, но рынок без сделок (не ошибка).
+                out.className = 'text-[11px] font-medium mt-2.5 leading-snug ' +
+                    (deals > 0 ? 'text-[#00E676]' : 'text-[#FFC53D]');
             } catch (e) {
                 out.textContent = t('profile.healthFail');
                 out.className = 'text-[11px] font-medium text-[#E52E71] mt-2.5 leading-snug';

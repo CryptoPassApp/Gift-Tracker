@@ -98,16 +98,28 @@ def create_app(settings: "Settings | None" = None) -> FastAPI:
 
         ``status`` отражает только API (иначе Docker пометил бы api
         нездоровым при перезапуске бота); состояние бота — в ``bot``,
-        пауза сканера после лимита TonAPI — в ``market``.
+        пауза сканера после лимита TonAPI — в ``market``, реальное
+        содержимое ленты — в ``feed`` (чтобы «Проверить связь» показывал
+        правду: сканер может быть жив при пустой ленте — рынок без сделок).
         """
         market = getattr(request.app.state, "market", None)
         cooldown = round(market.tonapi_cooldown_left) if market is not None else 0
+
+        feed: dict[str, object] = {}
+        db = getattr(request.app.state, "db", None)
+        if db is not None:
+            try:
+                feed = await db.feed_stats(settings.SNIPE_SIGNALS_RETENTION_HOURS)
+            except Exception:  # noqa: BLE001 — health не должен падать из-за телеметрии
+                logger.warning("feed_stats failed", exc_info=True)
+
         return {
             "status": "ok",
             "app": "gifttracker",
             "version": "1.0.0",
             "bot": heartbeat_status(settings),
             "market": {"tonapi_cooldown_sec": cooldown},
+            "feed": feed,
         }
 
     # Chrome Private Network Access: страница публичного сайта (web.telegram.org)

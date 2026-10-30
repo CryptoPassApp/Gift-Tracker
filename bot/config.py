@@ -129,7 +129,9 @@ class Settings(BaseSettings):
     # Куда ведет кнопка «Тех-поддержка» (саппорт-бот/акк; меняется в .env).
     SUPPORT_URL: str = "https://t.me/GiftTracker_App"
     # Лента сделок: сколько часов хранить snipe_signals (чистка в maintenance).
-    SNIPE_SIGNALS_RETENTION_HOURS: int = Field(default=24, ge=1)
+    # 7 суток, а не 24: иначе при каждом рестарте лента пустеет, если на рынке
+    # сейчас нет сделок ниже флора (проверено 31.10: 0 строк после чистки 24ч).
+    SNIPE_SIGNALS_RETENTION_HOURS: int = Field(default=168, ge=1)
 
     # ---------- Монетизация (крипта через Crypto Pay @CryptoBot) ----------
     # Токен приложения Crypto Pay: @CryptoBot -> Crypto Pay -> Create App.

@@ -325,6 +325,39 @@ class Database:
             )
             return int(result.rowcount or 0)
 
+    async def feed_stats(self, retention_hours: int = 168) -> dict[str, object]:
+        """Честная телеметрия ленты для /api/health и «Проверить связь».
+
+        ``total`` — все сделки в окне хранения, ``last_deal_min_ago`` — сколько
+        минут назад появилась последняя (None, если лента пуста). Именно эти
+        цифры отличают «сканер жив, но рынок без сделок» от «лента умерла».
+        """
+        from sqlalchemy import func
+
+        cutoff = datetime.utcnow() - timedelta(hours=retention_hours)
+        async with self.session() as session:
+            total = (
+                await session.execute(
+                    select(func.count(SnipeSignal.id)).where(SnipeSignal.created_at >= cutoff)
+                )
+            ).scalar_one()
+            last_created = (
+                await session.execute(select(func.max(SnipeSignal.created_at)))
+            ).scalar_one()
+        last_deal_min_ago: float | None = None
+        if last_created is not None:
+            last_created_naive = (
+                last_created.replace(tzinfo=None) if last_created.tzinfo else last_created
+            )
+            last_deal_min_ago = round(
+                (datetime.utcnow() - last_created_naive).total_seconds() / 60, 1
+            )
+        return {
+            "retention_hours": retention_hours,
+            "total": int(total),
+            "last_deal_min_ago": last_deal_min_ago,
+        }
+
     async def prune_snipe_signals(self, retention_hours: int = 24) -> int:
         """Чистит ленту сделок (snipe_signals) старше срока хранения.
 
