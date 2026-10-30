@@ -28,6 +28,12 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
         "MARKET_SOURCE": "mock",
         "FREE_PUSH_DELAY_SEC": 0,
         "SCAN_INTERVAL_SEC": 0.01,
+        # Heartbeat не должен трогать реальный ./data во время тестов.
+        "BOT_HEARTBEAT_FILE": str(tmp_path / "bot_heartbeat.json"),
+        # Кэш адресов коллекций тоже изолируем: иначе тесты подхватят
+        # реальный data/gift_collections.json и «найдут» адреса у всех.
+        "GIFT_COLLECTIONS_FILE": str(tmp_path / "gift_collections.json"),
+        "INIT_DATA_MAX_AGE_SEC": 0,  # в тестах датасет auth_date статичен (1770000000)
         "_env_file": None,  # игнорируем .env окружения разработчика
     }
     defaults.update(overrides)
@@ -37,6 +43,16 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
 @pytest.fixture()
 def settings(tmp_path: Path) -> Settings:
     return make_settings(tmp_path)
+
+
+@pytest.fixture()
+def client(tmp_path: Path):
+    from starlette.testclient import TestClient
+    from api.main import create_app
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 @pytest.fixture()

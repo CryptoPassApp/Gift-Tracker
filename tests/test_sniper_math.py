@@ -51,6 +51,26 @@ class TestEvaluateLot:
         assert signal is not None
         assert math.isclose(signal.net_profit_ton, 6.92, abs_tol=0.001)
 
+    def test_net_profit_portals_uses_2_percent_fee(self):
+        # Floor 20.0, Deal 12.0 on Portals: 20 * 0.98 - 12 - 0.08 = 7.52
+        lot = Lot(
+            gift_name="Plush Pepe",
+            lot_number="#1234",
+            price=12.0,
+            marketplace_url="https://t.me/portals/market",
+            source="portals",
+        )
+        signal = evaluate_lot(lot, 20.0, make_settings())
+        assert signal is not None
+        assert math.isclose(signal.net_profit_ton, 7.52, abs_tol=0.001)
+
+    def test_fee_for_source_settings(self):
+        s = make_settings()
+        assert s.fee_for_source("portals") == 0.02
+        assert s.fee_for_source("Portals") == 0.02
+        assert s.fee_for_source("getgems") == 0.05
+        assert s.fee_for_source(None) == 0.05
+
     def test_net_profit_can_be_negative(self):
         # Дисконт проходит порог, но после комиссий профита нет (микро-флор).
         # Floor 1.0, Deal 0.84 -> discount 16% ; net = 0.95 - 0.84 - 0.08 = 0.03
@@ -70,18 +90,33 @@ class TestEvaluateLot:
 
     def test_media_fields_are_passed_through(self):
         lot = Lot(
-            gift_name="Spaceman",
+            gift_name="Heroic Helmet",
             lot_number="#777",
             price=20.0,
             marketplace_url="https://getgems.io/nft/0:abc",
             item_address="0:abc",
             image_url="https://nft.fragment.com/collection/heroichelmet.webp",
+            model="Golden Hoplite",
+            backdrop="Obsidian",
+            symbol="Owl",
         )
         signal = evaluate_lot(lot, 38.5, make_settings())
         assert signal is not None
         assert signal.image_url == "https://nft.fragment.com/collection/heroichelmet.webp"
         assert signal.item_address == "0:abc"
         assert signal.marketplace_url == "https://getgems.io/nft/0:abc"
+        # Атрибуты конкретного NFT проходят из лота в сигнал без потерь.
+        assert signal.model == "Golden Hoplite"
+        assert signal.backdrop == "Obsidian"
+        assert signal.symbol == "Owl"
+
+    def test_floor_basis_is_recorded(self):
+        from bot.services.sniper_engine import build_signal
+
+        lot = make_lot(10.0)
+        signal = build_signal(lot, 16.5, make_settings(), floor_basis="model:Barcelona")
+        assert signal is not None
+        assert signal.floor_basis == "model:Barcelona"
 
     def test_as_dict_shape(self):
         lot = Lot(
@@ -96,6 +131,7 @@ class TestEvaluateLot:
             "gift_name", "lot_number", "floor_price", "deal_price",
             "discount_pct", "net_profit_ton", "marketplace_url",
             "image_url", "item_address", "source", "is_hot", "created_at",
+            "model", "backdrop", "symbol", "floor_basis",
         } == set(payload.keys())
         assert payload["created_at"].endswith("Z")
 

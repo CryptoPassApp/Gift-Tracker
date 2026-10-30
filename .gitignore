@@ -2,15 +2,20 @@
 .env
 .env.local
 data/
+backups/
 *.db
 *.db-shm
 *.db-wal
+*.log
 
 # Python
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Локальные логи запуска
+logs/
 
 # IDE / OS
 .idea/

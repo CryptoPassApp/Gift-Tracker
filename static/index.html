@@ -3,10 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="referrer" content="no-referrer">
     <title>GiftTracker — Telegram Gifts Sniper Terminal</title>
     <meta name="description" content="Snipe Telegram Gifts below floor. Live floor tracker, arbitrage terminal, instant alerts.">
 
     <!-- Inter font -->
+    <link rel="icon" type="image/png" href="logo.png?v=2">
+    <link rel="apple-touch-icon" href="logo.png?v=2">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -39,10 +42,98 @@
             background-color: #0B0E17;
             overscroll-behavior-y: none;
             -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
         }
 
         body {
             font-family: 'Inter', system-ui, sans-serif;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        /* ============================================================
+           GLOBAL NO-SELECT & NO-DRAG (Native App feel)
+           Запрещаем выделение текста и перетаскивание картинок
+           ============================================================ */
+        *, *::before, *::after {
+            -webkit-user-select: none !important;
+            -moz-user-select: none !important;
+            -ms-user-select: none !important;
+            user-select: none !important;
+            -webkit-touch-callout: none !important;
+        }
+
+        /* Разрешаем выделение и ввод только в текстовых полях */
+        input, textarea {
+            -webkit-user-select: text !important;
+            -moz-user-select: text !important;
+            -ms-user-select: text !important;
+            user-select: text !important;
+        }
+
+        /* Картинки и иконки нельзя перетаскивать или выделять */
+        img, svg {
+            -webkit-user-drag: none !important;
+            -khtml-user-drag: none !important;
+            -moz-user-drag: none !important;
+            -o-user-drag: none !important;
+            user-drag: none !important;
+            -webkit-user-select: none !important;
+            user-select: none !important;
+            pointer-events: none;
+        }
+
+        /* Горизонтальный скролл (wheel + drag) */
+        .overflow-x-auto,
+        .h-scrollable {
+            overflow-x: auto !important;
+            overflow-y: hidden !important;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior-x: contain;
+            cursor: grab;
+        }
+
+        .cursor-grabbing {
+            cursor: grabbing !important;
+        }
+
+        /* Фильтры маркетов: 2x2 сетка в узком окне (mini size на ПК и смартфонах),
+           и ровная линия в 1 ряд при расширении окна (от 520px) */
+        #sourceFilters {
+            display: grid !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 0.5rem !important;
+            margin-bottom: 0.75rem !important;
+        }
+
+        #sourceFilters .source-chip,
+        #sourceFilters button {
+            width: 100% !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            text-align: center !important;
+            padding: 0.5rem 0.65rem !important;
+            white-space: nowrap !important;
+        }
+
+        @media (min-width: 520px) {
+            #sourceFilters {
+                display: flex !important;
+                flex-direction: row !important;
+                flex-wrap: nowrap !important;
+                align-items: center !important;
+                gap: 0.5rem !important;
+                overflow-x: auto !important;
+            }
+
+            #sourceFilters .source-chip,
+            #sourceFilters button {
+                width: auto !important;
+                flex-shrink: 0 !important;
+                justify-content: flex-start !important;
+            }
         }
 
         ::-webkit-scrollbar {
@@ -213,10 +304,83 @@
         .shake {
             animation: shakeX 0.4s ease-in-out;
         }
+
+        /* ---------- Wide-screen adaptive layout (desktop / tablet Telegram) ----------
+           Узкая телефонная колонка (430px) остаётся на телефонах; на широком
+           webview контент растёт по центру, сетки становятся многоколоночными. */
+        @media (min-width: 560px) {
+            #app { max-width: 620px; }
+            #floorsGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        }
+
+        @media (min-width: 768px) {
+            #app { max-width: 860px; }
+            #floorsGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+            /* Нижнее меню и тосты не остаются узкой полосой по центру. */
+            nav.fixed { max-width: 860px; }
+            #toasts { max-width: 860px; }
+
+            /*
+             * Лента сигналов: 2 колонки вместо вертикальной простыни.
+             * stretch (а не start) — карточки в ряду одной высоты; иначе
+             * короткий оффер рядом с высоким выглядит рвано.
+             */
+            #feedList {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 0.75rem;
+                align-items: stretch;
+            }
+            #feedList > * + * { margin-top: 0; }
+            #feedList > .deal-card {
+                display: flex;
+                flex-direction: column;
+                height: 100%;
+            }
+            /* Кнопка Snipe всегда прижата к низу — ряды выглядят ровно. */
+            #feedList .deal-actions { margin-top: auto; }
+            /*
+             * Внутренний контент растёт вместе с колонкой: при 860px карточка
+             * шире телефонной, и фиксированные 64px медиа/15px заголовок
+             * читались как миниатюра, а не как полноценная карточка.
+             */
+            #feedList .deal-media { width: 5.5rem; height: 5.5rem; }
+            #feedList .deal-img { width: 100%; height: 100%; }
+            #feedList .deal-title { font-size: 1.0625rem; }
+            /* Цена всегда в одну строку: иначе длинная подпись «Floor · <модель>»
+               сжимает левый блок и «20.92 TON» ломается на две строки —
+               в соседних карточках цена одной строкой, и ряд выглядит рвано. */
+            #feedList .deal-price { font-size: 1.625rem; white-space: nowrap; }
+            #feedList .deal-floor { max-width: 48%; }
+
+            /* Список алертов — тоже в 2 колонки. */
+            #alertsList {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 0.625rem;
+                align-items: start;
+            }
+            #alertsList > * + * { margin-top: 0; }
+
+            /* Формы конструктора (слайдеры/поля) не растягиваем на всю ширину. */
+            #screen-alerts > div,
+            #screen-vip > div,
+            #screen-profile > div { max-width: 640px; margin-left: auto; margin-right: auto; }
+        }
+
+        @media (min-width: 1200px) {
+            #app { max-width: 1060px; }
+            #floorsGrid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+            #feedList { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.875rem; }
+            #feedList .deal-media { width: 6.25rem; height: 6.25rem; }
+            #feedList .deal-title { font-size: 1.125rem; }
+            #feedList .deal-price { font-size: 1.875rem; }
+        }
     </style>
 </head>
 
-<body class="bg-[#0B0E17] text-white min-h-screen antialiased selection:bg-[#00F0FF]/30">
+<body class="bg-[#0B0E17] text-white min-h-screen antialiased select-none selection:bg-transparent">
 
     <!-- ============================================================
          SVG ICON SPRITE — минималистичные иконки вместо системных эмодзи
@@ -283,6 +447,22 @@
             <symbol id="i-x" viewBox="0 0 24 24">
                 <path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>
             </symbol>
+            <symbol id="i-user" viewBox="0 0 24 24">
+                <circle cx="12" cy="8.2" r="3.7" fill="none" stroke="currentColor" stroke-width="1.8"/>
+                <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                      d="M4.8 19.6c.7-3.3 3.6-5.4 7.2-5.4s6.5 2.1 7.2 5.4"/>
+            </symbol>
+            <symbol id="i-edit" viewBox="0 0 24 24">
+                <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/>
+                <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M13.5 6.5l3 3"/>
+            </symbol>
+            <symbol id="i-filter" viewBox="0 0 24 24">
+                <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3.5 5.5h17l-6.5 7.6V20l-4-2.3v-4.6L3.5 5.5Z"/>
+            </symbol>
+            <symbol id="i-layers" viewBox="0 0 24 24">
+                <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M12 3.5 3.8 8 12 12.5 20.2 8 12 3.5Z"/>
+                <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M4 12.6 12 17l8-4.4M4 16.8 12 21.2l8-4.4"/>
+            </symbol>
         </defs>
     </svg>
 
@@ -299,13 +479,16 @@
 
         <!-- ================= HEADER ================= -->
         <header class="flex items-center justify-between mb-4">
-            <div class="flex items-center gap-2.5">
-                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-[#00E676] to-[#00b894] flex items-center justify-center shadow-[0_0_22px_rgba(0,230,118,0.35)]">
-                    <svg class="w-5 h-5 text-[#0B0E17]" fill="none" aria-hidden="true"><use href="#i-bolt"></use></svg>
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl overflow-hidden border border-[#00FFA3]/30 shadow-[0_0_20px_rgba(0,255,163,0.25)] flex items-center justify-center bg-[#0B0E17] flex-shrink-0">
+                    <img src="logo.png?v=2" alt="Logo" class="w-full h-full object-cover select-none" draggable="false">
                 </div>
                 <div>
-                    <h1 class="text-[17px] font-extrabold tracking-tight leading-none">GIFTTRACKER</h1>
-                    <p class="text-[10px] text-[#475569] font-bold uppercase tracking-widest mt-1">Sniper Terminal</p>
+                    <h1 class="text-[17px] font-extrabold tracking-tight leading-none text-white">GIFTTRACKER</h1>
+                    <p class="text-[10px] text-[#00FFA3] font-bold uppercase tracking-widest mt-1 flex items-center gap-1">
+                        <span class="inline-block w-1.5 h-1.5 rounded-full bg-[#00E676] animate-pulse"></span>
+                        Terminal
+                    </p>
                 </div>
             </div>
 
@@ -321,7 +504,7 @@
             <div class="rounded-[11px] bg-[#0B0E17] px-3.5 py-2.5 flex items-center gap-2.5">
                 <svg class="w-5 h-5 text-[#FF8A00] shrink-0" fill="none" aria-hidden="true"><use href="#i-bolt"></use></svg>
                 <div class="flex-1">
-                    <p id="demoBadgeTitle" class="text-[11px] font-extrabold tracking-tight text-ember-gradient">DEMO MODE (GitHub Pages View)</p>
+                    <p id="demoBadgeTitle" class="text-[11px] font-extrabold tracking-tight text-ember-gradient">ДЕМО-РЕЖИМ · БЭКЕНД НЕДОСТУПЕН</p>
                     <p id="demoBadgeSub" class="text-[10px] text-[#94A3B8] font-medium leading-tight mt-0.5">Симулированный поток лотов — бэкенд не подключен</p>
                 </div>
                 <span class="relative flex w-2.5 h-2.5">
@@ -351,7 +534,7 @@
 
                 <div class="grid grid-cols-3 gap-2">
                     <div class="rounded-xl bg-[#0B0E17]/65 border border-white/[0.05] p-2.5">
-                        <p class="text-[9px] text-[#475569] uppercase font-bold tracking-widest">Floor Index</p>
+                        <p class="text-[9px] text-[#475569] uppercase font-bold tracking-widest" data-i18n="floors.median">Median Floor</p>
                         <p id="statFloorIndex" class="num text-[15px] font-extrabold mt-1">— TON</p>
                     </div>
                     <div class="rounded-xl bg-[#0B0E17]/65 border border-white/[0.05] p-2.5">
@@ -366,7 +549,34 @@
             </div>
 
             <!-- Filter pills -->
-            <div id="feedFilters" class="flex gap-2 overflow-x-auto no-scrollbar pb-1 mb-4"></div>
+            <div id="sourceFilters" class="mb-3"></div>
+
+            <!-- Collection search + price range (фильтры по всем коллекциям) -->
+            <div class="rounded-2xl bg-[#131926]/75 backdrop-blur-xl border border-white/[0.08] p-3 mb-2">
+                <div class="flex items-center gap-2">
+                    <span class="shrink-0 w-8 h-8 rounded-xl bg-[#00F0FF]/10 border border-[#00F0FF]/25 flex items-center justify-center text-[#00F0FF]">
+                        <svg class="w-4 h-4" fill="none" aria-hidden="true"><use href="#i-filter"></use></svg>
+                    </span>
+                    <input id="feedGiftSearch" list="feedGiftOptions" type="search" autocomplete="off" enterkeyhint="search"
+                           placeholder="Коллекция или модель: Pepe, Leonardo…"
+                           class="flex-1 min-w-0 bg-[#0B0E17]/65 border border-white/[0.06] rounded-xl px-3 py-2 text-[12px] font-bold text-white placeholder-[#475569] outline-none focus:border-[#00F0FF]/40">
+                    <datalist id="feedGiftOptions"></datalist>
+                </div>
+                <div class="flex items-center gap-2 mt-2">
+                    <input id="feedPriceMin" type="number" min="0" step="0.1" inputmode="decimal" placeholder="от, TON"
+                           class="w-1/2 min-w-0 bg-[#0B0E17]/65 border border-white/[0.06] rounded-xl px-3 py-2 text-[12px] font-bold text-white placeholder-[#475569] outline-none focus:border-[#00E676]/40 num">
+                    <span class="shrink-0 text-[#475569] text-[11px] font-bold">—</span>
+                    <input id="feedPriceMax" type="number" min="0" step="0.1" inputmode="decimal" placeholder="до, TON"
+                           class="w-1/2 min-w-0 bg-[#0B0E17]/65 border border-white/[0.06] rounded-xl px-3 py-2 text-[12px] font-bold text-white placeholder-[#475569] outline-none focus:border-[#00E676]/40 num">
+                    <button id="feedReset" title="Сбросить фильтры"
+                            class="shrink-0 w-9 h-9 rounded-xl bg-[#0B0E17]/65 border border-white/[0.06] text-[#94A3B8] active:scale-95 transition-transform flex items-center justify-center">
+                        <svg class="w-4 h-4" fill="none" aria-hidden="true"><use href="#i-x"></use></svg>
+                    </button>
+                </div>
+                <div id="feedQuickRanges" class="flex gap-1.5 overflow-x-auto no-scrollbar mt-2 h-scrollable"></div>
+            </div>
+
+            <div id="feedFilters" class="flex gap-2 overflow-x-auto no-scrollbar pb-1 mb-4 h-scrollable"></div>
 
             <!-- Feed of sniper lots -->
             <div id="feedList" class="space-y-3"></div>
@@ -392,13 +602,17 @@
             <div class="flex items-center justify-between mb-4">
                 <div>
                     <h2 class="text-lg font-extrabold tracking-tight">Floor Matrix</h2>
-                    <p class="text-[11px] text-[#94A3B8] font-medium mt-0.5">8 коллекций · обновление в реальном времени</p>
+                    <p id="floorsSubtitle" class="text-[11px] text-[#94A3B8] font-medium mt-0.5">Коллекции · флор из датасета</p>
                 </div>
                 <div class="px-2.5 py-1.5 rounded-lg bg-[#0B0E17]/65 border border-white/[0.05]">
                     <p class="text-[9px] text-[#475569] uppercase font-bold tracking-widest">TON / USD</p>
-                    <p class="num text-xs font-extrabold text-[#00F0FF]">$5.20</p>
+                    <p id="tonUsdRate" class="num text-xs font-extrabold text-[#00F0FF]">$1.24</p>
                 </div>
             </div>
+
+            <!-- Search across the full NFT gift catalog -->
+            <input id="floorSearch" type="search" placeholder="Поиск подарка..."
+                   class="w-full mb-3 px-4 py-2.5 rounded-xl bg-[#131926]/75 border border-white/[0.08] text-sm text-white placeholder:text-[#475569] outline-none focus:border-cyan-500/40">
 
             <!-- Gift floor cards grid -->
             <div id="floorsGrid" class="grid grid-cols-2 gap-3 mb-6"></div>
@@ -411,19 +625,27 @@
                     </span>
                     <div>
                         <h3 class="text-sm font-extrabold tracking-tight">Flip Calculator</h3>
-                        <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest mt-0.5">Net after Getgems 5% + gas</p>
+                        <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest mt-0.5">Net after fee + gas</p>
                     </div>
                 </div>
 
-                <!-- Gift selector for the calculator -->
-                <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest mb-2">Подарок</p>
-                <div id="calcGiftChips" class="flex gap-2 overflow-x-auto no-scrollbar pb-1 mb-4"></div>
+                <!-- Gift/model selector: список с поиском (как на Tonnel/Portals) -->
+                <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest mb-2" data-i18n="calc.giftModel">Подарок и модель</p>
+                <button id="calcPickerBtn"
+                        class="w-full flex items-center gap-3 rounded-xl bg-[#0B0E17]/65 border border-white/[0.06] p-3 mb-4 text-left active:scale-[0.99] transition-transform">
+                    <span id="calcPickerIcon" class="shrink-0 w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 overflow-hidden flex items-center justify-center"></span>
+                    <span class="flex-1 min-w-0">
+                        <span id="calcPickerTitle" class="block text-sm font-extrabold tracking-tight truncate" data-i18n="calc.pickGift">Выбрать подарок</span>
+                        <span id="calcPickerSubtitle" class="block text-[10px] font-bold uppercase tracking-widest text-[#475569] mt-0.5 truncate" data-i18n="calc.giftModelHint">Коллекции и модели</span>
+                    </span>
+                    <span class="text-[#475569] text-lg leading-none">›</span>
+                </button>
 
                 <!-- Buy price input -->
                 <div class="rounded-xl bg-[#0B0E17]/65 border border-white/[0.05] p-3.5 mb-3">
                     <div class="flex items-center justify-between mb-2">
-                        <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest">Цена покупки (TON)</p>
-                        <p class="text-[10px] font-medium text-[#94A3B8]">Floor: <span id="calcFloorHint" class="num text-white font-bold">—</span></p>
+                        <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest" data-i18n="calc.buyPrice">Цена покупки (TON)</p>
+                        <p class="text-[10px] font-medium text-[#94A3B8]"><span data-i18n="calc.floorHint">Флор: </span><span id="calcFloorHint" class="num text-white font-bold">—</span></p>
                     </div>
                     <div class="flex items-center gap-2">
                         <input id="calcBuyPrice" type="number" inputmode="decimal" step="0.1" min="0"
@@ -433,28 +655,37 @@
                     </div>
                 </div>
 
+                <!-- Market fee selector -->
+                <div class="flex items-center justify-between mb-3 px-1">
+                    <span class="text-[10px] text-[#475569] uppercase font-bold tracking-widest" data-i18n="calc.fee">Комиссия маркета</span>
+                    <div class="flex gap-1.5" id="calcFeeChips">
+                        <button type="button" data-fee="0.05" class="calc-fee-btn px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase border transition-all bg-[#00F0FF]/15 text-[#00F0FF] border-[#00F0FF]/40">Getgems 5%</button>
+                        <button type="button" data-fee="0.02" class="calc-fee-btn px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase border transition-all bg-[#0B0E17]/65 text-[#94A3B8] border-white/[0.05]">Portals 2%</button>
+                    </div>
+                </div>
+
                 <!-- Results -->
                 <div class="rounded-xl bg-[#0B0E17]/65 border border-white/[0.05] p-3.5">
-                    <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest mb-2">Чистая прибыль при продаже по флору</p>
+                    <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest mb-2" data-i18n="calc.netLabel">Чистая прибыль при продаже по флору</p>
                     <div class="flex items-end justify-between mb-3">
                         <p id="calcNet" class="num text-3xl font-extrabold tracking-tight">—</p>
                         <p id="calcRoi" class="num text-sm font-extrabold">—</p>
                     </div>
                     <div class="space-y-1.5 text-[11px] font-medium">
                         <div class="flex justify-between text-[#94A3B8]">
-                            <span>Продажа по флору</span>
+                            <span data-i18n="calc.sellAtFloor">Продажа по флору</span>
                             <span id="calcSellLine" class="num text-white font-bold">—</span>
                         </div>
                         <div class="flex justify-between text-[#94A3B8]">
-                            <span>− Комиссия Getgems 5%</span>
-                            <span id="calcFeeLine" class="num text-white font-bold">—</span>
+                            <span><span data-i18n="calc.feeLabel">− Комиссия маркета (</span><span id="calcFeePercentLabel">5%</span>)</span>
+                            <span id="calcFeeAmount" class="num text-white font-bold">—</span>
                         </div>
                         <div class="flex justify-between text-[#94A3B8]">
-                            <span>− Газ сети TON</span>
+                            <span data-i18n="calc.gasLine">− Газ сети TON</span>
                             <span class="num text-white font-bold">0.08 TON</span>
                         </div>
                         <div class="flex justify-between text-[#94A3B8] pt-1.5 border-t border-white/[0.05]">
-                            <span>Точка безубыточности</span>
+                            <span data-i18n="calc.breakeven">Точка безубыточности</span>
                             <span id="calcBreakeven" class="num text-white font-bold">—</span>
                         </div>
                     </div>
@@ -474,10 +705,10 @@
                         <svg class="w-4 h-4 text-[#FF8A00]" fill="none" aria-hidden="true"><use href="#i-clock"></use></svg>
                     </span>
                     <div class="flex-1">
-                        <p class="text-xs font-extrabold tracking-tight text-[#FF8A00]">Задержка уведомлений — 45 секунд</p>
+                        <p class="text-xs font-extrabold tracking-tight text-[#FF8A00]" data-i18n="alerts.bannerTitle">Задержка уведомлений — 45 секунд</p>
                         <p class="text-[11px] text-[#94A3B8] font-medium leading-snug mt-1">
-                            Алерты доставляются с задержкой 45 секунд. Самые жирные лоты перехватывают PRO-снайперы.
-                            <button data-goto="vip" class="goto-btn font-extrabold text-[#00E676] underline underline-offset-2">Купи PRO для мгновенного снайпинга →</button>
+                            <span data-i18n="alerts.bannerSub">Алерты доставляются с задержкой 45 секунд. Самые жирные лоты перехватывают PRO-снайперы.</span>
+                            <button data-goto="vip" data-i18n="alerts.bannerCta" class="goto-btn font-extrabold text-[#00E676] underline underline-offset-2">Купи PRO для мгновенного снайпинга →</button>
                         </p>
                     </div>
                 </div>
@@ -490,31 +721,37 @@
                         <svg class="w-4 h-4 text-[#00E676]" fill="none" aria-hidden="true"><use href="#i-sliders"></use></svg>
                     </span>
                     <div>
-                        <h3 class="text-sm font-extrabold tracking-tight">Конструктор алертов</h3>
+                        <h3 class="text-sm font-extrabold tracking-tight" data-i18n="alerts.builderTitle">Конструктор алертов</h3>
                         <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest mt-0.5">Personal trigger</p>
                     </div>
                 </div>
 
-                <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest mb-2">Подарок</p>
+                <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest mb-2" data-i18n="alerts.gift">Подарок</p>
                 <div id="alertGiftChips" class="flex gap-2 overflow-x-auto no-scrollbar pb-1 mb-5"></div>
 
                 <!-- Max price slider -->
                 <div class="mb-5">
                     <div class="flex items-center justify-between mb-2">
-                        <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest">Максимальная цена лота</p>
+                        <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest" data-i18n="alerts.maxPrice">Максимальная цена лота</p>
                         <p class="num text-sm font-extrabold text-[#00F0FF]" id="alertPriceLabel">— TON</p>
                     </div>
-                    <input id="alertPriceRange" type="range" min="20" max="120" step="1" value="80">
+                    <input id="alertPriceRange" type="range" min="1" max="150" step="1" value="80">
+                    <div class="flex items-center gap-2 mt-2">
+                        <input id="alertPriceInput" type="number" min="0" step="0.01" inputmode="decimal"
+                               placeholder="любая цена, TON"
+                               class="flex-1 min-w-0 bg-[#0B0E17]/65 border border-white/[0.06] rounded-lg px-3 py-1.5 text-[12px] font-bold text-white placeholder-[#475569] outline-none focus:border-[#00F0FF]/40 num">
+                        <span class="shrink-0 text-[10px] font-bold text-[#475569] uppercase tracking-widest">TON</span>
+                    </div>
                     <div class="flex justify-between mt-1.5 text-[9px] font-bold text-[#475569] uppercase tracking-widest">
-                        <span>дешевле</span>
-                        <span>выше флора</span>
+                        <span data-i18n="alerts.cheaper">дешевле</span>
+                        <span data-i18n="alerts.aboveFloor">выше флора</span>
                     </div>
                 </div>
 
                 <!-- Discount slider -->
                 <div class="mb-5">
                     <div class="flex items-center justify-between mb-2">
-                        <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest">Минимальный дисконт</p>
+                        <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest" data-i18n="alerts.minDiscount">Минимальный дисконт</p>
                         <p class="num text-sm font-extrabold text-[#00E676]" id="alertDiscountLabel">−15%</p>
                     </div>
                     <input id="alertDiscountRange" type="range" min="5" max="50" step="1" value="15">
@@ -527,17 +764,22 @@
                 <button id="createAlertBtn"
                         class="w-full py-3.5 rounded-xl bg-[#00E676] text-[#0B0E17] text-sm font-extrabold tracking-tight active:scale-[0.98] transition-transform shadow-[0_8px_28px_rgba(0,230,118,0.30)] inline-flex items-center justify-center gap-2">
                     <svg class="w-4 h-4" fill="none" aria-hidden="true"><use href="#i-bell"></use></svg>
-                    <span>Создать алерт</span>
+                    <span id="createAlertLabel" data-i18n="alerts.create">Создать алерт</span>
+                </button>
+                <button id="cancelEditBtn"
+                        class="hidden w-full mt-2 py-3 rounded-xl bg-[#131926]/80 border border-white/10 text-[#94A3B8] text-sm font-bold tracking-tight active:scale-[0.98] transition-transform"
+                        data-i18n="alerts.cancelEdit">
+                    Отменить редактирование
                 </button>
 
-                <p id="alertLimitNote" class="hidden text-center text-[10px] font-bold text-[#FF8A00] mt-2.5">
+                <p id="alertLimitNote" class="hidden text-center text-[10px] font-bold text-[#FF8A00] mt-2.5" data-i18n="alerts.freeLimitNote">
                     FREE-лимит: 1 активный алерт. Перейди на PRO для безлимита.
                 </p>
             </div>
 
             <!-- Saved alerts list -->
             <div class="flex items-center justify-between mb-3">
-                <h3 class="text-sm font-extrabold tracking-tight">Мои алерты</h3>
+                <h3 class="text-sm font-extrabold tracking-tight" data-i18n="alerts.myAlerts">Мои алерты</h3>
                 <span id="alertsCounter" class="text-[10px] font-bold uppercase tracking-widest text-[#475569]">0 / 1</span>
             </div>
             <div id="alertsList" class="space-y-2.5"></div>
@@ -546,8 +788,8 @@
                 <div class="w-14 h-14 mx-auto mb-3 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center justify-center">
                     <svg class="w-7 h-7 text-[#475569]" fill="none" aria-hidden="true"><use href="#i-bell-off"></use></svg>
                 </div>
-                <p class="text-sm font-extrabold tracking-tight">Алертов пока нет</p>
-                <p class="text-xs text-[#94A3B8] font-medium mt-1">Создай первый триггер выше —<br>и бот пришлет пуш, когда появится лот.</p>
+                <p class="text-sm font-extrabold tracking-tight" data-i18n="alerts.emptyTitle">Алертов пока нет</p>
+                <p id="alertsEmptySub" class="text-xs text-[#94A3B8] font-medium mt-1">Создай первый триггер выше —<br>и бот пришлет пуш, когда появится лот.</p>
             </div>
         </section>
 
@@ -570,6 +812,27 @@
                 <div id="vipStatusChip" class="inline-block mt-3 px-3 py-1.5 rounded-full bg-[#0B0E17]/65 border border-white/[0.05] text-[10px] font-extrabold uppercase tracking-widest text-[#94A3B8]">
                     Текущий план: FREE
                 </div>
+            </div>
+
+            <!-- PRO discount filter -->
+            <div class="rounded-2xl bg-[#131926]/75 backdrop-blur-xl border border-white/[0.08] p-4 mb-4">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="w-8 h-8 rounded-lg bg-[#00F0FF]/10 border border-[#00F0FF]/25 flex items-center justify-center shrink-0">
+                        <svg class="w-4 h-4 text-[#00F0FF]" fill="none" aria-hidden="true"><use href="#i-filter"></use></svg>
+                    </span>
+                    <div class="flex-1">
+                        <h3 class="text-sm font-extrabold tracking-tight">PRO-фильтр дисконта</h3>
+                        <p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest mt-0.5">Меньше шума, только жирные лоты</p>
+                    </div>
+                </div>
+                <p class="text-[11px] text-[#94A3B8] font-medium leading-snug mb-3 mt-2">
+                    Сигналы слабее выбранного порога не будут приходить в Telegram.
+                    Персональные алерты работают по своему порогу.
+                </p>
+                <div id="discountFilterChips" class="flex gap-2 overflow-x-auto no-scrollbar pb-1"></div>
+                <p id="discountFilterNote" class="hidden text-[10px] font-bold text-[#FF8A00] mt-2.5">
+                    Порог сохранится, но включится после активации PRO.
+                </p>
             </div>
 
             <!-- Free vs PRO comparison -->
@@ -646,6 +909,34 @@
                 Оплата через Telegram Stars · без карт
             </p>
         </section>
+        <!-- ============================================================
+             SCREEN 5 — PROFILE (аккаунт, язык, поддержка, о нас)
+             ============================================================ -->
+        <section id="screen-profile" class="screen" hidden>
+            <div id="profileRoot"></div>
+        </section>
+    </div>
+
+    <!-- ============================================================
+         CALCULATOR PICKER (коллекции -> модели, с поиском)
+         ============================================================ -->
+    <div id="calcPickerOverlay" class="fixed inset-0 z-[90] hidden">
+        <div id="calcPickerBackdrop" class="absolute inset-0 bg-[#05070c]/80 backdrop-blur-sm"></div>
+        <div class="absolute inset-x-0 bottom-0 max-w-[430px] mx-auto bg-[#0f1420] border-t border-white/10 rounded-t-3xl p-4 max-h-[78vh] flex flex-col shadow-[0_-20px_60px_rgba(0,0,0,0.6)]">
+            <div class="flex items-center gap-2 mb-3">
+                <button id="calcPickerBack"
+                        class="hidden shrink-0 w-9 h-9 rounded-xl bg-[#131926] border border-white/[0.08] text-[#94A3B8] flex items-center justify-center text-lg">‹</button>
+                <div class="flex-1 min-w-0">
+                    <p id="calcPickerHeading" class="text-sm font-extrabold tracking-tight truncate">Выбрать подарок</p>
+                    <p id="calcPickerSubheading" class="text-[10px] text-[#475569] font-bold uppercase tracking-widest mt-0.5 truncate">Коллекции и модели</p>
+                </div>
+                <button id="calcPickerClose"
+                        class="shrink-0 w-9 h-9 rounded-xl bg-[#131926] border border-white/[0.08] text-[#94A3B8] flex items-center justify-center text-sm">✕</button>
+            </div>
+            <input id="calcPickerSearch" type="search" autocomplete="off" placeholder="Поиск..."
+                   class="w-full mb-3 px-4 py-2.5 rounded-xl bg-[#0B0E17]/65 border border-white/[0.06] text-sm text-white placeholder:text-[#475569] outline-none focus:border-cyan-500/40">
+            <div id="calcPickerList" class="overflow-y-auto space-y-1.5 pb-2"></div>
+        </div>
     </div>
 
     <!-- ============================================================
@@ -672,6 +963,11 @@
             <svg class="w-[22px] h-[22px]" fill="none" aria-hidden="true"><use href="#i-crown"></use></svg>
             <span class="text-[9px] uppercase tracking-widest">VIP</span>
         </button>
+        <button data-screen="profile"
+                class="nav-btn flex-1 flex flex-col items-center gap-1 py-2 rounded-full text-[#94A3B8] font-bold transition-all">
+            <svg class="w-[22px] h-[22px]" fill="none" aria-hidden="true"><use href="#i-user"></use></svg>
+            <span class="text-[9px] uppercase tracking-widest" data-i18n="nav.profile">Профиль</span>
+        </button>
     </nav>
 
     <!-- Toast container -->
@@ -687,65 +983,127 @@
            1. GLOBAL CONFIG & GIFT PRESETS
            ============================================================ */
 
-        const TON_USD_RATE = 5.20;          // 1 TON = $5.20
-        const GETGEMS_FEE = 0.05;           // 5% marketplace fee
+        let TON_USD_RATE = 1.24;            // 1 TON = $1.24 (live dynamic)
+        const GETGEMS_FEE = 0.05;           // 5% marketplace fee (Getgems, default)
+        const PORTALS_FEE = 0.02;           // 2% marketplace fee (Portals)
         const TON_GAS = 0.08;               // TON blockchain fee
+        const MARKET_FEES = {
+            getgems: 0.05,
+            portals: 0.02,
+            mrkt: 0.05,
+            tonnel: 0.025,
+        };
+        function getMarketFee(source) {
+            if (!source) return GETGEMS_FEE;
+            return MARKET_FEES[String(source).toLowerCase()] ?? GETGEMS_FEE;
+        }
         const SNIPER_THRESHOLD = 15;        // >= 15% -> Snipe Alert
         const HOT_THRESHOLD = 30;           // >= 30% -> Hot Liquidation
         const FREE_ALERT_LIMIT = 1;         // max active alerts for FREE
         const FREE_PUSH_DELAY_SEC = 45;     // FREE push delay (informational)
         const DEMO_FEED_INTERVAL_MS = 7000; // new demo lot every 7 seconds
         const FEED_CAP = 40;
+        const BOT_USERNAME = 'GiftTracker_App';  // для поддержки и настроек уведомлений
+        const BOT_URL = 'https://t.me/' + BOT_USERNAME;
+        const APP_VERSION = '1.0.0';
 
-        // Пресеты 8 подарков на РЕАЛЬНЫХ ассетах Telegram.
-        // fragmentSlug + supply дают картинку КОНКРЕТНОЙ модели:
+        // Пресеты 8 подарков на РЕАЛЬНЫХ ассетах Telegram: имена — как в
+        // Telegram/Getgems (Genie Lamp, Ion Gem, ...), без выдуманных
+        // «коллекций». fragmentSlug + supply дают картинку КОНКРЕТНОЙ модели:
         // https://nft.fragment.com/gift/{slug}-{номер}.webp — тот же узор
-        // и фон, что у этого NFT на Getgems. supply — проверенный диапазон
-        // существующих номеров (картинка никогда не 404).
+        // и фон, что у этого NFT на Getgems.
         const GIFTS = [
-            { id: 'plush-pepe',    name: 'Plush Pepe',    collection: 'Rare Meme',    baseFloor: 16.5,
+            { id: 'plush-pepe',    name: 'Plush Pepe',    baseFloor: 6470.0,
               image: 'https://nft.fragment.com/collection/plushpepe.webp',
               fragmentSlug: 'plushpepe', supply: 2024,
-              address: '0:49381239d5509a69189b483a5d6876c1f184da49fb843a9fb784baa3f715c0b5' },
-            { id: 'magic-hat',     name: 'Magic Hat',     collection: 'Cyber Magic',  baseFloor: 24.0,
-              image: 'https://nft.fragment.com/gift/genielamp-1.webp',
+              address: '0:46fa0e9a864014196a5e7d66f1f83ffdb10f2859bbf2ea9baeabbf14d9ce0d50' },
+            { id: 'genie-lamp',    name: 'Genie Lamp',    baseFloor: 38.0,
+              image: 'https://nft.fragment.com/collection/genielamp.webp',
               fragmentSlug: 'genielamp', supply: 4999,
               address: null },
-            { id: 'diamond-box',   name: 'Diamond Box',   collection: 'Royal Luxury', baseFloor: 45.0,
+            { id: 'ion-gem',       name: 'Ion Gem',       baseFloor: 74.0,
               image: 'https://nft.fragment.com/collection/iongem.webp',
               fragmentSlug: 'iongem', supply: 3000,
-              address: '0:48ce225ca297b41f6e08c893f34586afafc03da36931940e3995968306c42514' },
-            { id: 'heart-box',     name: 'Heart Box',     collection: 'Romance',      baseFloor: 8.2,
+              address: '0:cbec731b71ad05b9fae31c5711a222e4122397917a0efef1f681550df09369e2' },
+            { id: 'trapped-heart', name: 'Trapped Heart', baseFloor: 17.6,
               image: 'https://nft.fragment.com/collection/trappedheart.webp',
               fragmentSlug: 'trappedheart', supply: 4999,
               address: null },
-            { id: 'golden-star',   name: 'Golden Star',   collection: 'Premium',      baseFloor: 12.0,
+            { id: 'astral-shard',  name: 'Astral Shard',  baseFloor: 120.0,
               image: 'https://nft.fragment.com/collection/astralshard.webp',
               fragmentSlug: 'astralshard', supply: 4999,
-              address: '0:bd9ca89e71bfd232244a692f3caa7bbe73715a5c1adf16df17360844fe8f15e0' },
-            { id: 'spaceman',      name: 'Spaceman',      collection: 'Cosmos',       baseFloor: 38.5,
+              address: null },
+            { id: 'heroic-helmet', name: 'Heroic Helmet', baseFloor: 188.88,
               image: 'https://nft.fragment.com/collection/heroichelmet.webp',
               fragmentSlug: 'heroichelmet', supply: 3000,
-              address: '0:b14482a1147ce6861d639a105581c3c6b86e80bdbbfd0118fec054cf4052b133' },
-            { id: 'birthday-cake', name: 'Birthday Cake', collection: 'Celebration',  baseFloor: 5.4,
+              address: null },
+            { id: 'mousse-cake',   name: 'Mousse Cake',   baseFloor: 5.3,
               image: 'https://nft.fragment.com/collection/moussecake.webp',
               fragmentSlug: 'moussecake', supply: 4999,
-              address: '0:63cdd8b6ed923e45ef7738e2226b49bb626514f1df2e6c936c4ad65373ba8d26' },
-            { id: 'champagne',     name: 'Champagne',     collection: 'VIP Party',    baseFloor: 19.8,
+              address: null },
+            { id: 'perfume-bottle', name: 'Perfume Bottle', baseFloor: 84.0,
               image: 'https://nft.fragment.com/collection/perfumebottle.webp',
               fragmentSlug: 'perfumebottle', supply: 3000,
-              address: '0:13823580cafb1c06e1021b1352d87fd85411922381579774f0ec6c83563bd7b6' },
+              address: null },
+            { id: 'resistance-dog', name: 'Resistance Dog', baseFloor: 465.0,
+              image: 'https://nft.fragment.com/collection/resistancedog.webp',
+              fragmentSlug: 'resistancedog', supply: 20000,
+              address: '0:075827023de994693139142aec3240f4ecb7582258ad209aa2f8860d1e574a12' },
+            { id: 'mirage-lamp',   name: 'Mirage Lamp',   baseFloor: 4.08,
+              image: 'https://nft.fragment.com/collection/miragelamp.webp',
+              fragmentSlug: 'miragelamp', supply: 5000,
+              address: '0:3d3a771621bf604600fb2c397f25ce44df8471e03786532403f8b4784cd2844a' },
+            { id: 'fine-pen',      name: 'Fine Pen',      baseFloor: 8.44,
+              image: 'https://nft.fragment.com/collection/finepen.webp',
+              fragmentSlug: 'finepen', supply: 5000,
+              address: '0:42c059da94dd1a1b3a098158a1b4c2d3797b8a3bfb47231abb6dd74d9671f626' },
         ];
 
         const GIFT_BY_NAME = {};
         GIFTS.forEach(g => { GIFT_BY_NAME[g.name] = g; });
 
+        // Бэкенд отдаёт весь каталог NFT-подарков (123+), а не только 8.
+        // Перестраиваем локальный список, чтобы карточки/калькулятор/алерты
+        // работали со всеми подарками, а картинки шли облачными ссылками.
+        function applyCatalog(floors) {
+            if (!Array.isArray(floors) || !floors.length) return;
+            const next = floors.map(f => ({
+                id: String(f.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+                name: f.name,
+                asset: f.asset || '',
+                baseFloor: f.floor,
+                image: f.image || FALLBACK_IMAGE,
+                fragmentSlug: (f.short_name || String(f.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '')).replace(/_/g, ''),
+                supply: 10000,
+                address: f.collection_address || null,
+                // Флоры конкретных маркетов + ссылки на офферы всех 3 платформ.
+                marketFloors: f.market_floors || {},
+                mrktBid: Number(f.mrkt_bid) || null,
+                offerUrls: f.offer_urls || null,
+            }));
+            GIFTS.length = 0;
+            next.forEach(g => GIFTS.push(g));
+            Object.keys(GIFT_BY_NAME).forEach(k => { delete GIFT_BY_NAME[k]; });
+            GIFTS.forEach(g => { GIFT_BY_NAME[g.name] = g; });
+            // Подсказки для поиска по ленте: все коллекции каталога.
+            const options = $('#feedGiftOptions');
+            if (options) {
+                options.innerHTML = GIFTS
+                    .slice()
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map(g => '<option value="' + esc(g.name) + '"></option>')
+                    .join('');
+            }
+            if (!state.calcGift || !GIFT_BY_NAME[state.calcGift.name]) state.calcGift = GIFTS[0];
+            if (!state.alertGift || !GIFT_BY_NAME[state.alertGift.name]) state.alertGift = GIFTS[0];
+        }
+
         const FILTERS = [
-            { id: 'hot',     icon: 'i-flame', label: 'Все горячие' },
-            { id: 'd30',     label: 'Скидка >30%' },
-            { id: 'plush-pepe',  gift: 'plush-pepe',  label: 'Pepe' },
-            { id: 'magic-hat',   gift: 'magic-hat',   label: 'Magic Hat' },
-            { id: 'diamond-box', gift: 'diamond-box', label: 'Diamond' },
+            { id: 'hot',     icon: 'i-flame', labelKey: 'filters.hot', label: 'Все горячие' },
+            { id: 'd30',     labelKey: 'filters.d30', label: 'Скидка >30%' },
+            { id: 'd50',     labelKey: 'filters.d50', label: 'Скидка >50%' },
+            { id: 'profit',  labelKey: 'filters.profit', label: 'Профит >5 TON' },
+            { id: 'rare',    labelKey: 'filters.rare', label: 'С моделью' },
         ];
 
         /* ============================================================
@@ -754,6 +1112,11 @@
 
         const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
         const isTelegramEnv = !!(tg && tg.initData && tg.initData.length > 32);
+
+        // Очистка URL хэша/query от чувствительного tgWebAppData для защиты от утечки
+        if (window.history && window.history.replaceState && window.location.hash.includes('tgWebAppData')) {
+            try { window.history.replaceState(null, '', window.location.pathname + window.location.search); } catch (e) {}
+        }
 
         if (tg) {
             try {
@@ -779,11 +1142,23 @@
         const state = {
             demo: !isTelegramEnv,          // true when opened outside Telegram or backend unreachable
             user: { is_pro: false, username: null },
+            lang: (function () {
+                try { return localStorage.getItem('gt_lang') === 'en' ? 'en' : 'ru'; }
+                catch (e) { return 'ru'; }
+            })(),
             floors: {},                    // name -> { floor, change24h, liquidity }
             feed: [],                      // newest first
             alerts: [],                    // saved personal alerts
             filter: 'hot',
+            sourceFilter: 'all',           // all | getgems | portals (живые источники ленты)
+            // Фильтры ленты: коллекция/модель + диапазон цен (в TON).
+            feedFilters: { q: '', minPrice: '', maxPrice: '' },
+            floorQuery: '',                // поиск по каталогу подарков
+            editingAlert: null,            // id алерта в режиме редактирования
             calcGift: GIFTS[0],
+            calcModel: null,               // выбранная модель (флор модели для калькулятора)
+            modelsByGift: {},              // gift name -> [{name, floor}] | null (ошибка) | undefined (загрузка)
+            calcPicker: { mode: 'gift', gift: null, query: '' },
             alertGift: GIFTS[0],
             selectedPlan: 'pro_month',
             demoFloors: {},                // mock random-walk state
@@ -791,6 +1166,7 @@
             realPollFeed: null,
             realPollFloors: null,
             demoTimer: null,
+            demoRetryTimer: null,      // автовосстановление: пробуем живой бэкенд из демо
         };
 
         /* ============================================================
@@ -809,9 +1185,14 @@
             return '$' + (tonValue * TON_USD_RATE).toFixed(2);
         }
 
-        function netProfit(floorPrice, dealPrice) {
-            // NET PROFIT FORMULA: (Floor * 0.95) - Deal - 0.08
-            return (floorPrice * (1 - GETGEMS_FEE)) - dealPrice - TON_GAS;
+        function netProfit(floorPrice, dealPrice, sourceOrFee) {
+            let fee = GETGEMS_FEE;
+            if (typeof sourceOrFee === 'number') {
+                fee = sourceOrFee;
+            } else if (typeof sourceOrFee === 'string') {
+                fee = getMarketFee(sourceOrFee);
+            }
+            return (floorPrice * (1 - fee)) - dealPrice - TON_GAS;
         }
 
         function discountPct(floorPrice, dealPrice) {
@@ -840,7 +1221,8 @@
         function esc(str) {
             return String(str)
                 .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
         // Встроенная SVG-иконка из спрайта (молния, корона, колокол и т.д.).
@@ -870,10 +1252,481 @@
             return 'https://nft.fragment.com/gift/' + gift.fragmentSlug + '-' + modelNumber + '.webp';
         }
 
-        function imgTag(url, alt, cls, extra) {
-            return '<img src="' + esc(url) + '" alt="' + esc(alt || '') + '" loading="lazy" ' +
-                'onerror="this.onerror=null;this.src=\'' + FALLBACK_IMAGE + '\'" ' +
+        function imgTag(url, alt, cls, extra, fallback) {
+            const fb = fallback || FALLBACK_IMAGE;
+            return '<img src="' + esc(url) + '" alt="' + esc(alt || '') + '" loading="lazy" draggable="false" ' +
+                'onerror="this.onerror=null;this.src=\'' + esc(fb) + '\'" ' +
                 'class="' + (cls || 'w-14 h-14 object-contain') + '" ' + (extra || '') + '>';
+        }
+
+        /* ============================================================
+           4.5 I18N + PROFILE (язык, о нас, поддержка)
+           ============================================================ */
+
+        const I18N = {
+            ru: {
+                'nav.profile': 'Профиль',
+                'filters.all_sources': 'Все источники',
+                'filters.search': 'Коллекция или модель: Pepe, Leonardo…',
+                'filters.min': 'от, TON',
+                'filters.max': 'до, TON',
+                'filters.reset': 'Сбросить фильтры',
+                'filters.hot': 'Все горячие',
+                'filters.d30': 'Скидка >30%',
+                'filters.d50': 'Скидка >50%',
+                'filters.profit': 'Профит >5 TON',
+                'filters.rare': 'С моделью',
+                'range.any': 'Любая',
+                'range.le10': 'до 10',
+                'range.10_80': '10–80',
+                'range.80_250': '80–250',
+                'range.250_1k': '250–1k',
+                'range.ge1k': '1k+',
+                'feed.emptyTitle': 'Радар сканирует рынок…',
+                'feed.emptySub': 'Как только появится лот ниже флора модели —<br>он мгновенно появится здесь.',
+                'feed.emptyFilterTitle': 'Под фильтры сделок нет',
+                'feed.emptyFilterSub': 'Измени коллекцию или диапазон цен —<br>в ленте только лоты ниже флора модели.',
+                'alerts.bannerTitle': 'Задержка уведомлений — 45 секунд',
+                'alerts.bannerSub': 'Алерты доставляются с задержкой 45 секунд. Самые жирные лоты перехватывают PRO-снайперы.',
+                'alerts.bannerCta': 'Купи PRO для мгновенного снайпинга →',
+                'alerts.builderTitle': 'Конструктор алертов',
+                'alerts.gift': 'Подарок',
+                'alerts.maxPrice': 'Максимальная цена лота',
+                'alerts.pricePlaceholder': 'любая цена, TON',
+                'alerts.cheaper': 'дешевле',
+                'alerts.aboveFloor': 'выше флора',
+                'alerts.minDiscount': 'Минимальный дисконт',
+                'alerts.create': 'Создать алерт',
+                'alerts.saveChanges': 'Сохранить изменения',
+                'alerts.cancelEdit': 'Отменить редактирование',
+                'alerts.freeLimitNote': 'FREE-лимит: 1 активный алерт. Перейди на PRO для безлимита.',
+                'alerts.myAlerts': 'Мои алерты',
+                'alerts.emptyTitle': 'Алертов пока нет',
+                'alerts.emptySub': 'Создай первый триггер выше —<br>и бот пришлет пуш, когда появится лот.',
+                'alerts.editTitle': 'Редактировать алерт',
+                'alerts.deleteTitle': 'Удалить алерт',
+                'alerts.editing': 'Редактирование: ',
+                'alerts.limitToast': 'FREE-лимит: 1 алерт. Оформи PRO для безлимита',
+                'alerts.created': 'Алерт создан: ',
+                'alerts.createdPrice': 'Алерт создан: {name} ≤ {price} TON',
+                'alerts.createFailed': 'Не удалось создать алерт: ',
+                'alerts.updated': 'Алерт обновлён: ',
+                'alerts.updateFailed': 'Не удалось обновить алерт: ',
+                'alerts.deleted': 'Алерта удален',
+                'alerts.deleteFailed': 'Ошибка удаления: ',
+                'calc.subtitle': 'Net after fee + gas',
+                'calc.giftModel': 'Подарок и модель',
+                'calc.pickGift': 'Выбрать подарок',
+                'calc.giftModelHint': 'Коллекции и модели',
+                'calc.buyPrice': 'Цена покупки (TON)',
+                'calc.floorHint': 'Флор: ',
+                'calc.fee': 'Комиссия маркета',
+                'calc.netLabel': 'Чистая прибыль при продаже по флору',
+                'calc.sellAtFloor': 'Продажа по флору',
+                'calc.feeLabel': '− Комиссия маркета (',
+                'calc.gasLine': '− Газ сети TON',
+                'calc.breakeven': 'Точка безубыточности',
+                'calc.loadedToCalc': '{name} загружен в калькулятор',
+                'calc.collection': 'коллекция',
+                'calc.model': 'модель',
+                'calc.modelFloor': 'Модель · флор {floor} TON',
+                'calc.collectionFloor': 'Коллекция · флор {floor} TON',
+                'calc.pickSub': '{n} коллекций · поиск по названию',
+                'calc.nothing': 'Ничего не найдено',
+                'calc.loadingModels': 'Загружаю модели…',
+                'calc.modelsCount': '{n} моделей · флор по датасету',
+                'calc.modelsMissing': 'Модели не найдены',
+                'calc.modelsFailed': 'Не удалось загрузить модели',
+                'calc.modelsUnavailable': 'Для этой коллекции нет цен по моделям',
+                'calc.searchPlaceholder': 'Поиск по названию NFT / номеру',
+                'floors.subtitle': '{n} коллекций · флор из датасета',
+                'floors.history': ' · история 24ч копится',
+                'floors.median': 'Median Floor',
+                'profile.title': 'Профиль',
+                'profile.subtitle': 'Аккаунт, язык и поддержка',
+                'profile.guest': 'Гость',
+                'profile.langTitle': 'Язык',
+                'profile.langHint': 'Меню и профиль',
+                'profile.planTitle': 'Подписка',
+                'profile.planFree': 'FREE · задержка пушей 45 секунд, 1 алерт',
+                'profile.planActive': 'PRO активен',
+                'profile.planActiveUntil': 'PRO активен до',
+                'profile.planBtn': 'Открыть VIP',
+                'profile.referral': 'Пригласить друга',
+                'profile.invited': 'Приглашено',
+                'profile.referralBtn': 'Поделиться',
+                'profile.support': 'Поддержка',
+                'profile.supportHint': 'Вопросы, баги и идеи — в боте',
+                'profile.supportToast': 'Открываю бота @GiftTracker_App',
+                'profile.notify': 'Уведомления',
+                'profile.notifyHint': 'Порог дисконта и алерты в боте: /settings',
+                'profile.notifyToast': 'Открой бота и отправь /settings',
+                'profile.about': 'О нас',
+                'profile.dataHint': 'Каталог: TelegramGifts · Лоты: Getgems (TonAPI) · Адреса: Tonkeeper',
+                'profile.aboutText': 'GiftTracker — снайпер подарков Telegram. Флоры и цены моделей берутся из публичного датасета TelegramGifts (TGMrkt, Getgems, Portals), лоты — с Getgems через TonAPI, адреса коллекций — из реестра Tonkeeper. Профит считается после комиссии Getgems 5% и газа 0.08 TON. Это не финансовый совет: проверяй лот перед покупкой.',
+                'profile.version': 'Версия',
+                'profile.health': 'Проверить связь',
+                'profile.healthOk': 'Бэкенд на связи',
+                'profile.healthFail': 'Бэкенд недоступен',
+                'profile.marketOk': 'сканер активен',
+                'profile.marketPause': 'лимит TonAPI: пауза {n} мин'
+            },
+            en: {
+                'nav.profile': 'Profile',
+                'filters.all_sources': 'All sources',
+                'filters.search': 'Collection or model: Pepe, Leonardo…',
+                'filters.min': 'from, TON',
+                'filters.max': 'to, TON',
+                'filters.reset': 'Reset filters',
+                'filters.hot': 'All Hot',
+                'filters.d30': 'Discount >30%',
+                'filters.d50': 'Discount >50%',
+                'filters.profit': 'Profit >5 TON',
+                'filters.rare': 'With Model',
+                'range.any': 'Any',
+                'range.le10': '≤ 10',
+                'range.10_80': '10–80',
+                'range.80_250': '80–250',
+                'range.250_1k': '250–1k',
+                'range.ge1k': '1k+',
+                'feed.emptyTitle': 'Radar is scanning the market…',
+                'feed.emptySub': 'As soon as a lot drops below its model floor,<br>it shows up here instantly.',
+                'feed.emptyFilterTitle': 'No deals match the filters',
+                'feed.emptyFilterSub': 'Change the collection or price range —<br>the feed shows only lots below the model floor.',
+                'alerts.bannerTitle': 'Notification delay — 45 seconds',
+                'alerts.bannerSub': 'Alerts are delivered with a 45-second delay. The juiciest lots get sniped by PRO members.',
+                'alerts.bannerCta': 'Get PRO for instant sniping →',
+                'alerts.builderTitle': 'Alert builder',
+                'alerts.gift': 'Gift',
+                'alerts.maxPrice': 'Max lot price',
+                'alerts.pricePlaceholder': 'any price, TON',
+                'alerts.cheaper': 'cheaper',
+                'alerts.aboveFloor': 'above floor',
+                'alerts.minDiscount': 'Min discount',
+                'alerts.create': 'Create alert',
+                'alerts.saveChanges': 'Save changes',
+                'alerts.cancelEdit': 'Cancel editing',
+                'alerts.freeLimitNote': 'FREE limit: 1 active alert. Upgrade to PRO for unlimited.',
+                'alerts.myAlerts': 'My alerts',
+                'alerts.emptyTitle': 'No alerts yet',
+                'alerts.emptySub': 'Create your first trigger above —<br>the bot will push when a matching lot appears.',
+                'alerts.editTitle': 'Edit alert',
+                'alerts.deleteTitle': 'Delete alert',
+                'alerts.editing': 'Editing: ',
+                'alerts.limitToast': 'FREE limit: 1 alert. Get PRO for unlimited',
+                'alerts.created': 'Alert created: ',
+                'alerts.createdPrice': 'Alert created: {name} ≤ {price} TON',
+                'alerts.createFailed': 'Failed to create alert: ',
+                'alerts.updated': 'Alert updated: ',
+                'alerts.updateFailed': 'Failed to update alert: ',
+                'alerts.deleted': 'Alert deleted',
+                'alerts.deleteFailed': 'Delete error: ',
+                'calc.subtitle': 'Net after fee + gas',
+                'calc.giftModel': 'Gift & model',
+                'calc.pickGift': 'Select a gift',
+                'calc.giftModelHint': 'Collections & models',
+                'calc.buyPrice': 'Buy price (TON)',
+                'calc.floorHint': 'Floor: ',
+                'calc.fee': 'Market fee',
+                'calc.netLabel': 'Net profit selling at floor',
+                'calc.sellAtFloor': 'Sell at floor',
+                'calc.feeLabel': '− Market fee (',
+                'calc.gasLine': '− TON network gas',
+                'calc.breakeven': 'Breakeven',
+                'calc.loadedToCalc': '{name} loaded into calculator',
+                'calc.collection': 'collection',
+                'calc.model': 'model',
+                'calc.modelFloor': 'Model · floor {floor} TON',
+                'calc.collectionFloor': 'Collection · floor {floor} TON',
+                'calc.pickSub': '{n} collections · search by name',
+                'calc.nothing': 'Nothing found',
+                'calc.loadingModels': 'Loading models…',
+                'calc.modelsCount': '{n} models · dataset floors',
+                'calc.modelsMissing': 'No models found',
+                'calc.modelsFailed': 'Failed to load models',
+                'calc.modelsUnavailable': 'No model prices for this collection',
+                'calc.searchPlaceholder': 'Search NFT / number',
+                'floors.subtitle': '{n} collections · dataset floors',
+                'floors.history': ' · 24h history is building',
+                'floors.median': 'Median Floor',
+                'profile.title': 'Profile',
+                'profile.subtitle': 'Account, language and support',
+                'profile.guest': 'Guest',
+                'profile.langTitle': 'Language',
+                'profile.langHint': 'Menu and profile',
+                'profile.planTitle': 'Subscription',
+                'profile.planFree': 'FREE · 45s push delay, 1 alert',
+                'profile.planActive': 'PRO is active',
+                'profile.planActiveUntil': 'PRO active until',
+                'profile.planBtn': 'Open VIP',
+                'profile.referral': 'Invite a friend',
+                'profile.invited': 'Invited',
+                'profile.referralBtn': 'Share',
+                'profile.support': 'Support',
+                'profile.supportHint': 'Questions, bugs and ideas — in the bot',
+                'profile.supportToast': 'Opening @GiftTracker_App',
+                'profile.notify': 'Notifications',
+                'profile.notifyHint': 'Discount threshold and alerts in the bot: /settings',
+                'profile.notifyToast': 'Open the bot and send /settings',
+                'profile.about': 'About us',
+                'profile.dataHint': 'Catalog: TelegramGifts · Lots: Getgems (TonAPI) · Addresses: Tonkeeper',
+                'profile.aboutText': 'GiftTracker is a Telegram gift sniper. Floors and model prices come from the public TelegramGifts dataset (TGMrkt, Getgems, Portals), lots from Getgems via TonAPI, collection addresses from the Tonkeeper registry. Profit is net of the 5% Getgems fee and 0.08 TON gas. This is not financial advice — check the lot before buying.',
+                'profile.version': 'Version',
+                'profile.health': 'Check connection',
+                'profile.healthOk': 'Backend is reachable',
+                'profile.healthFail': 'Backend is unreachable',
+                'profile.marketOk': 'scanner is active',
+                'profile.marketPause': 'TonAPI limit: paused {n} min'
+            }
+        };
+
+        function t(key, vars) {
+            const dict = I18N[state.lang] || I18N.ru;
+            let text = dict[key] || I18N.ru[key] || key;
+            Object.keys(vars || {}).forEach(name => {
+                text = text.split('{' + name + '}').join(String(vars[name]));
+            });
+            return text;
+        }
+
+        function formatDate(iso) {
+            if (!iso) return '';
+            const date = new Date(iso);
+            if (isNaN(date.getTime())) return '';
+            return date.toLocaleDateString(state.lang === 'en' ? 'en-GB' : 'ru-RU', {
+                day: '2-digit', month: '2-digit', year: 'numeric'
+            });
+        }
+
+        // Ссылки t.me: внутри Telegram — нативным методом, иначе в новой вкладке.
+        function openExternalLink(url) {
+            if (tg && tg.openTelegramLink) {
+                try { tg.openTelegramLink(url); return; } catch (e) { /* fall through */ }
+            }
+            if (tg && tg.openLink) {
+                try { tg.openLink(url); return; } catch (e) { /* fall through */ }
+            }
+            window.open(url, '_blank');
+        }
+
+        function applyLanguage() {
+            document.documentElement.lang = state.lang === 'en' ? 'en' : 'ru';
+            $$('[data-i18n]').forEach(el => { el.textContent = t(el.getAttribute('data-i18n')); });
+            const search = $('#feedGiftSearch');
+            if (search) search.placeholder = t('filters.search');
+            const minEl = $('#feedPriceMin');
+            if (minEl) minEl.placeholder = t('filters.min');
+            const maxEl = $('#feedPriceMax');
+            if (maxEl) maxEl.placeholder = t('filters.max');
+            const resetBtn = $('#feedReset');
+            if (resetBtn) resetBtn.title = t('filters.reset');
+            // Экран алертов: placeholder цены, подстрока с <br> и кнопка создания
+            // зависят от языка и состояния редактирования.
+            const priceInput = $('#alertPriceInput');
+            if (priceInput) priceInput.placeholder = t('alerts.pricePlaceholder');
+            const emptySub = $('#alertsEmptySub');
+            if (emptySub) emptySub.innerHTML = t('alerts.emptySub');
+            const createLabel = $('#createAlertLabel');
+            if (createLabel) createLabel.textContent = state.editingAlert ? t('alerts.saveChanges') : t('alerts.create');
+            const calcSearch = $('#calcPickerSearch');
+            if (calcSearch) calcSearch.placeholder = t('calc.searchPlaceholder');
+            renderQuickRanges();
+            renderProfile();
+            renderFeed();
+            renderFloors();
+            renderAlerts();
+            renderCalcChips();
+            // Пикер калькулятора открыт — перерисовать его тексты на новом языке.
+            const calcOverlay = $('#calcPickerOverlay');
+            if (calcOverlay && !calcOverlay.classList.contains('hidden')) renderCalcPicker();
+        }
+
+        function profileRow(id, icon, title, hint) {
+            return '<button id="' + id + '" class="w-full flex items-center gap-3 p-4 text-left active:bg-white/[0.03] transition-colors">' +
+                '<span class="shrink-0 w-9 h-9 rounded-xl bg-[#0B0E17]/65 border border-white/[0.06] flex items-center justify-center text-[#00F0FF]">' + iconSvg(icon, 'w-4 h-4') + '</span>' +
+                '<span class="flex-1 min-w-0">' +
+                    '<span class="block text-sm font-extrabold tracking-tight">' + esc(title) + '</span>' +
+                    '<span class="block text-[10px] text-[#475569] font-bold uppercase tracking-widest mt-0.5 truncate">' + esc(hint) + '</span>' +
+                '</span>' +
+                '<span class="text-[#475569] text-lg leading-none">›</span>' +
+            '</button>';
+        }
+
+        function renderProfile() {
+            const root = $('#profileRoot');
+            if (!root) return;
+
+            const user = state.user || {};
+            const isPro = !!user.is_pro;
+            const demo = !!state.demo;
+            const name = user.first_name || user.username || t('profile.guest');
+            const handle = user.username
+                ? '@' + user.username
+                : (user.telegram_id ? 'ID ' + user.telegram_id : '—');
+            const initial = String(name).trim().charAt(0).toUpperCase() || 'G';
+            const planText = isPro
+                ? (user.pro_expires_at
+                    ? t('profile.planActiveUntil') + ' ' + formatDate(user.pro_expires_at)
+                    : t('profile.planActive'))
+                : t('profile.planFree');
+            const planChip = isPro ? 'PRO' : (demo ? 'DEMO' : 'FREE');
+            const chipClass = isPro
+                ? 'border-[#00E676]/40 text-[#00E676]'
+                : (demo ? 'border-[#FF8A00]/40 text-[#FF8A00]' : 'border-white/[0.08] text-[#94A3B8]');
+            const referralLink = user.referral_link
+                || (user.telegram_id ? (BOT_URL + '?start=ref_' + user.telegram_id) : '');
+            const langButton = (code, label) => {
+                const active = state.lang === code;
+                return '<button data-lang="' + code + '" class="px-3 py-1.5 rounded-full text-[10px] font-extrabold uppercase tracking-widest border transition-all ' +
+                    (active
+                        ? 'bg-[#00F0FF]/15 text-[#00F0FF] border-[#00F0FF]/40'
+                        : 'bg-[#0B0E17]/65 text-[#475569] border-white/[0.05]') + '">' + label + '</button>';
+            };
+
+            root.innerHTML = '' +
+                '<div class="flex items-center justify-between mb-4">' +
+                    '<div>' +
+                        '<h2 class="text-lg font-extrabold tracking-tight">' + esc(t('profile.title')) + '</h2>' +
+                        '<p class="text-[11px] text-[#94A3B8] font-medium mt-0.5">' + esc(t('profile.subtitle')) + '</p>' +
+                    '</div>' +
+                    '<div class="px-3 py-1.5 rounded-full bg-[#131926]/75 border ' + chipClass + ' text-[10px] font-extrabold uppercase tracking-widest">' + planChip + '</div>' +
+                '</div>' +
+
+                '<div class="rounded-2xl bg-[#131926]/75 backdrop-blur-xl border border-white/[0.08] p-4 mb-4 flex items-center gap-3.5">' +
+                    '<div class="w-14 h-14 rounded-2xl bg-[#00F0FF]/10 border border-[#00F0FF]/25 flex items-center justify-center text-lg font-extrabold text-[#00F0FF]">' + esc(initial) + '</div>' +
+                    '<div class="min-w-0 flex-1">' +
+                        '<p class="text-[15px] font-extrabold tracking-tight truncate">' + esc(name) + '</p>' +
+                        '<p class="text-[11px] font-medium text-[#475569] truncate mt-0.5">' + esc(handle) + '</p>' +
+                    '</div>' +
+                '</div>' +
+
+                '<div class="rounded-2xl bg-[#131926]/75 backdrop-blur-xl border border-white/[0.08] p-4 mb-4 flex items-center justify-between gap-3">' +
+                    '<div>' +
+                        '<p class="text-sm font-extrabold tracking-tight">' + esc(t('profile.langTitle')) + '</p>' +
+                        '<p class="text-[10px] text-[#475569] uppercase tracking-widest font-bold mt-0.5">' + esc(t('profile.langHint')) + '</p>' +
+                    '</div>' +
+                    '<div class="flex gap-1.5 shrink-0">' + langButton('ru', 'RU') + langButton('en', 'EN') + '</div>' +
+                '</div>' +
+
+                '<div class="rounded-2xl bg-[#131926]/75 backdrop-blur-xl border border-white/[0.08] p-4 mb-4">' +
+                    '<div class="flex items-center justify-between gap-3">' +
+                        '<div class="min-w-0">' +
+                            '<p class="text-sm font-extrabold tracking-tight">' + esc(t('profile.planTitle')) + '</p>' +
+                            '<p class="text-[11px] font-medium text-[#94A3B8] mt-0.5">' + esc(planText) + '</p>' +
+                        '</div>' +
+                        '<button id="profilePlanBtn" class="shrink-0 px-3 py-2 rounded-xl bg-[#00E676] text-[#0B0E17] text-[11px] font-extrabold active:scale-95 transition-transform">' + esc(t('profile.planBtn')) + '</button>' +
+                    '</div>' +
+                '</div>' +
+
+                '<div class="rounded-2xl bg-[#131926]/75 backdrop-blur-xl border border-white/[0.08] p-4 mb-4">' +
+                    '<div class="flex items-center justify-between gap-3">' +
+                        '<div class="min-w-0">' +
+                            '<p class="text-sm font-extrabold tracking-tight">' + esc(t('profile.referral')) + '</p>' +
+                            '<p class="text-[11px] font-medium text-[#94A3B8] mt-0.5">' +
+                                esc(t('profile.invited')) + ': ' + (user.invited_count || 0) +
+                            '</p>' +
+                        '</div>' +
+                        '<button id="profileReferralBtn" class="shrink-0 px-3 py-2 rounded-xl bg-[#00F0FF]/15 border border-[#00F0FF]/40 text-[#00F0FF] text-[11px] font-extrabold active:scale-95 transition-transform">' +
+                            esc(t('profile.referralBtn')) +
+                        '</button>' +
+                    '</div>' +
+                    (referralLink
+                        ? '<p class="text-[10px] text-[#475569] mt-2 truncate">' + esc(referralLink) + '</p>'
+                        : '') +
+                '</div>' +
+
+                '<div class="rounded-2xl bg-[#131926]/75 backdrop-blur-xl border border-white/[0.08] divide-y divide-white/[0.05] mb-4 overflow-hidden">' +
+                    profileRow('profileSupport', 'i-bell', t('profile.support'), t('profile.supportHint')) +
+                    profileRow('profileNotify', 'i-sliders', t('profile.notify'), t('profile.notifyHint')) +
+                    profileRow('profileAbout', 'i-star', t('profile.about'), t('profile.dataHint')) +
+                '</div>' +
+
+                '<div id="profileAboutText" class="hidden rounded-2xl bg-[#131926]/75 backdrop-blur-xl border border-white/[0.08] p-4 mb-4 text-[11px] leading-relaxed text-[#94A3B8]">' +
+                    esc(t('profile.aboutText')) +
+                '</div>' +
+
+                '<div class="rounded-2xl bg-[#131926]/75 backdrop-blur-xl border border-white/[0.08] p-4">' +
+                    '<div class="flex items-center justify-between gap-3">' +
+                        '<p class="text-[10px] font-bold text-[#475569] uppercase tracking-widest">' + esc(t('profile.version')) + ' ' + APP_VERSION + '</p>' +
+                        '<button id="profileHealthBtn" class="shrink-0 px-3 py-1.5 rounded-full bg-[#0B0E17]/65 border border-white/[0.06] text-[10px] font-extrabold text-[#00F0FF]">' + esc(t('profile.health')) + '</button>' +
+                    '</div>' +
+                    '<p id="profileHealthResult" class="hidden text-[11px] font-medium text-[#94A3B8] mt-2.5 leading-snug"></p>' +
+                '</div>';
+
+            wireProfileEvents(root);
+        }
+
+        function wireProfileEvents(root) {
+            root.querySelectorAll('[data-lang]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const lang = btn.getAttribute('data-lang');
+                    if (lang === state.lang) return;
+                    state.lang = lang === 'en' ? 'en' : 'ru';
+                    try { localStorage.setItem('gt_lang', state.lang); } catch (e) { /* private mode */ }
+                    haptic('light');
+                    applyLanguage();
+                });
+            });
+
+            const planBtn = root.querySelector('#profilePlanBtn');
+            if (planBtn) planBtn.addEventListener('click', () => { haptic('light'); switchScreen('vip'); });
+
+            const referralBtn = root.querySelector('#profileReferralBtn');
+            if (referralBtn) referralBtn.addEventListener('click', () => {
+                haptic('light');
+                const user = state.user || {};
+                const link = user.referral_link
+                    || (user.telegram_id ? (BOT_URL + '?start=ref_' + user.telegram_id) : BOT_URL);
+                openExternalLink(
+                    'https://t.me/share/url?url=' + encodeURIComponent(link) +
+                    '&text=' + encodeURIComponent('GiftTracker — снайпер подарков Telegram')
+                );
+            });
+
+            const support = root.querySelector('#profileSupport');
+            if (support) support.addEventListener('click', () => {
+                haptic('light');
+                toast(t('profile.supportToast'));
+                openExternalLink(BOT_URL);
+            });
+
+            const notify = root.querySelector('#profileNotify');
+            if (notify) notify.addEventListener('click', () => {
+                haptic('light');
+                toast(t('profile.notifyToast'), 'warn');
+                openExternalLink(BOT_URL);
+            });
+
+            const about = root.querySelector('#profileAbout');
+            if (about) about.addEventListener('click', () => {
+                haptic('light');
+                const box = root.querySelector('#profileAboutText');
+                if (box) box.classList.toggle('hidden');
+            });
+
+            const healthBtn = root.querySelector('#profileHealthBtn');
+            if (healthBtn) healthBtn.addEventListener('click', checkBackendHealth);
+        }
+
+        async function checkBackendHealth() {
+            const out = $('#profileHealthResult');
+            if (!out) return;
+            out.classList.remove('hidden');
+            out.className = 'text-[11px] font-medium text-[#94A3B8] mt-2.5 leading-snug';
+            out.textContent = '…';
+            try {
+                const data = await api('/api/health');
+                const bot = data.bot || {};
+                const market = data.market || {};
+                const cooldown = Number(market.tonapi_cooldown_sec || 0);
+                let text = t('profile.healthOk') + ' · ' + (bot.alive ? t('profile.marketOk') : 'bot offline');
+                if (cooldown > 0) text += ' · ' + t('profile.marketPause', { n: Math.ceil(cooldown / 60) });
+                out.textContent = text;
+                out.className = 'text-[11px] font-medium text-[#00E676] mt-2.5 leading-snug';
+            } catch (e) {
+                out.textContent = t('profile.healthFail');
+                out.className = 'text-[11px] font-medium text-[#E52E71] mt-2.5 leading-snug';
+            }
         }
 
         /* ============================================================
@@ -952,6 +1805,15 @@
             if (v >= 6) return { label: 'HIGH', cls: 'text-[#00E676]' };
             if (v >= 3) return { label: 'MED', cls: 'text-[#FF8A00]' };
             return { label: 'LOW', cls: 'text-[#475569]' };
+        }
+
+        // Бэкенд отдает liquidity как {label, value} — добавляем CSS-класс.
+        function liquidityStyle(liquidity) {
+            const value = String((liquidity && (liquidity.value || liquidity.label)) || '').toLowerCase();
+            if (value === 'high') return { label: 'HIGH', cls: 'text-[#00E676]' };
+            if (value === 'med') return { label: 'MED', cls: 'text-[#FF8A00]' };
+            if (value === 'low') return { label: 'LOW', cls: 'text-[#475569]' };
+            return { label: '—', cls: 'text-[#475569]' };
         }
 
         function syncFloorsFromDemo() {
@@ -1044,7 +1906,13 @@
 
         function enterDemoMode(offline) {
             state.demo = true;
-            state.user = { is_pro: false, username: null };
+            state.user = {
+                is_pro: false,
+                username: null,
+                min_discount: (function () {
+                    try { return Number(localStorage.getItem('gt_demo_min_discount') || 0); } catch (e) { return 0; }
+                })(),
+            };
 
             $('#demoBadge').classList.remove('hidden');
             initDemoFloors();
@@ -1057,6 +1925,25 @@
 
             state.demoTimer = setInterval(demoTick, DEMO_FEED_INTERVAL_MS);
 
+            // Автовосстановление: если терминал стартовал в демо (бэкенд лежал
+            // в момент открытия), раз в 30с пробуем живой бэкенд и сами
+            // переключаемся на реальную ленту — перезакрывать приложение не надо.
+            if (offline) {
+                state.demoRetryTimer = setInterval(async () => {
+                    try {
+                        if (isTelegramEnv) {
+                            await loadRealData();
+                            startRealPolling();
+                        } else {
+                            const ok = await tryBackendDemo();
+                            if (!ok) return;
+                        }
+                        exitDemoMode();
+                        toast('Бэкенд вернулся — переключаюсь на живую ленту');
+                    } catch (e) { /* бэкенд всё еще недоступен */ }
+                }, 30000);
+            }
+
             if (offline) {
                 toast('Бэкенд недоступен — включен автономный Demo Mode');
             } else {
@@ -1064,9 +1951,118 @@
             }
         }
 
+        function exitDemoMode() {
+            state.demo = false;
+            if (state.demoTimer) { clearInterval(state.demoTimer); state.demoTimer = null; }
+            if (state.demoRetryTimer) { clearInterval(state.demoRetryTimer); state.demoRetryTimer = null; }
+            const badge = $('#demoBadge');
+            if (badge) badge.classList.add('hidden');
+        }
+
         /* ============================================================
            8. RENDER — SNIPER FEED
            ============================================================ */
+
+        /* ============================================================
+           7.9 HORIZONTAL SCROLL & DRAG HELPER (ПК / Мобильный)
+           Проворачивание колесиком мыши + drag перетаскивание
+           ============================================================ */
+        function makeHorizontalScrollable(el) {
+            if (!el || el._hasHScroll) return;
+            el._hasHScroll = true;
+
+            // Колесико мыши: вертикальный скролл мыши плавно крутит контейнер вбок
+            el.addEventListener('wheel', (e) => {
+                if (e.deltaY !== 0 && el.scrollWidth > el.clientWidth) {
+                    e.preventDefault();
+                    el.scrollLeft += e.deltaY;
+                }
+            }, { passive: false });
+
+            // Перетаскивание мышью (drag to scroll)
+            let isDown = false;
+            let startX = 0;
+            let startScrollLeft = 0;
+            let moved = 0;
+
+            el.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                isDown = true;
+                moved = 0;
+                startX = e.pageX;
+                startScrollLeft = el.scrollLeft;
+                el.classList.add('cursor-grabbing');
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (!isDown) return;
+                const dx = e.pageX - startX;
+                moved += Math.abs(dx);
+                el.scrollLeft = startScrollLeft - dx;
+            });
+
+            const stopDrag = () => {
+                if (!isDown) return;
+                isDown = false;
+                el.classList.remove('cursor-grabbing');
+                if (moved > 6) {
+                    const cancelClick = (ev) => {
+                        ev.stopPropagation();
+                        ev.preventDefault();
+                    };
+                    el.addEventListener('click', cancelClick, { capture: true, once: true });
+                }
+            };
+
+            window.addEventListener('mouseup', stopDrag);
+            window.addEventListener('blur', stopDrag);
+        }
+
+        // Источники ленты + MRKT-фильтр (связки): Tonnel удален (их API закрыт,
+        // лотов оттуда нет). 'mrkt' — особый фильтр: лоты, ДЕШЕВЛЕ автобая MRKT
+        // (купил на входе — продал в MRKT по их ставке).
+        const SOURCE_LIST = [
+            { id: 'all', labelKey: 'filters.all_sources', fallback: 'Все источники' },
+            { id: 'portals', label: 'Portals' },
+            { id: 'getgems', label: 'Getgems' },
+            { id: 'mrkt', label: 'MRKT' },
+        ];
+
+        const SOURCE_LABELS = {
+            getgems: 'Getgems',
+            portals: 'Portals',
+            mrkt: 'MRKT',
+        };
+
+        function renderSourceFilters() {
+            const wrap = $('#sourceFilters');
+            if (!wrap) return;
+            const hasMrktBids = Object.values(state.floors).some(f => f && Number(f.mrktBid) > 0);
+            const sources = SOURCE_LIST.filter(s => s.id !== 'mrkt' || hasMrktBids);
+            const valid = new Set(sources.map(s => s.id));
+            if (!valid.has(state.sourceFilter)) {
+                state.sourceFilter = 'all';
+            }
+            wrap.innerHTML = sources.map(s => {
+                const active = state.sourceFilter === s.id;
+                const label = s.labelKey ? (t(s.labelKey) || s.fallback) : s.label;
+                return '<button data-source="' + s.id + '" class="source-chip px-3 py-2 rounded-full text-[10px] font-extrabold uppercase tracking-widest border transition-all inline-flex items-center justify-center gap-1.5 ' +
+                    (active
+                        ? 'bg-[#00F0FF]/15 text-[#00F0FF] border-[#00F0FF]/40 shadow-[0_0_12px_rgba(0,240,255,0.18)]'
+                        : 'bg-[#0B0E17]/65 text-[#475569] border-white/[0.05] hover:text-[#94A3B8]') + '">' +
+                    iconSvg('i-layers', 'w-3 h-3 shrink-0') + '<span>' + esc(label) + '</span></button>';
+            }).join('');
+
+            wrap.querySelectorAll('[data-source]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    state.sourceFilter = btn.getAttribute('data-source');
+                    haptic('light');
+                    renderSourceFilters();
+                    renderFeed();
+                });
+            });
+            makeHorizontalScrollable(wrap);
+        }
 
         function renderFilters() {
             const wrap = $('#feedFilters');
@@ -1079,11 +2075,12 @@
                     const gf = GIFTS.find(x => x.id === f.gift);
                     visual = gf ? imgTag(gf.image, '', 'w-4 h-4 rounded-[5px] object-cover') : '';
                 }
+                const labelText = f.labelKey ? t(f.labelKey) : f.label;
                 return '<button data-filter="' + f.id + '" class="filter-pill shrink-0 px-3.5 py-2 rounded-full text-[11px] font-bold tracking-tight border transition-all inline-flex items-center gap-1.5 ' +
                     (active
                         ? 'bg-white/10 text-white border-white/10'
                         : 'bg-[#131926]/75 backdrop-blur-xl text-[#94A3B8] border-white/[0.08]') +
-                    '">' + visual + esc(f.label) + '</button>';
+                    '">' + visual + esc(labelText) + '</button>';
             }).join('');
 
             wrap.querySelectorAll('[data-filter]').forEach(btn => {
@@ -1094,29 +2091,177 @@
                     renderFeed();
                 });
             });
+            makeHorizontalScrollable(wrap);
+        }
+
+        // ---- Фильтры ленты: коллекция/модель + диапазон цен (TON) ----
+        // Потолок цены по умолчанию не ставится: пользователь сам выбирает
+        // диапазон, а от «стены из Pepe» защищает лимит лотов на коллекцию.
+        const FEED_QUICK_RANGES = [
+            { key: 'range.any', min: '', max: '' },
+            { key: 'range.le10', min: '', max: '10' },
+            { key: 'range.10_80', min: '10', max: '80' },
+            { key: 'range.80_250', min: '80', max: '250' },
+            { key: 'range.250_1k', min: '250', max: '1000' },
+            { key: 'range.ge1k', min: '1000', max: '' },
+        ];
+
+        function feedFiltersActive() {
+            const f = state.feedFilters;
+            return !!(f.q.trim() || f.minPrice !== '' || f.maxPrice !== '');
+        }
+
+        function feedQueryParams(extra) {
+            const params = new URLSearchParams();
+            const f = state.feedFilters;
+            if (f.q.trim()) params.set('q', f.q.trim());
+            const min = parseFloat(f.minPrice);
+            const max = parseFloat(f.maxPrice);
+            if (Number.isFinite(min)) params.set('min_price', String(min));
+            if (Number.isFinite(max)) params.set('max_price', String(max));
+            Object.keys(extra || {}).forEach(key => params.set(key, extra[key]));
+            return params;
+        }
+
+        async function fetchFeedList() {
+            // В реальном режиме фильтры считает бэкенд (SQL), в демо — клиент.
+            const params = feedQueryParams(isTelegramEnv ? null : { count: '50' });
+            const qs = params.toString();
+            const path = isTelegramEnv
+                ? ('/api/gifts/feed' + (qs ? '?' + qs : ''))
+                : ('/api/demo/feed' + (qs ? '?' + qs : ''));
+            return api(path);
+        }
+
+        function renderQuickRanges() {
+            const wrap = $('#feedQuickRanges');
+            if (!wrap) return;
+            const f = state.feedFilters;
+            wrap.innerHTML = FEED_QUICK_RANGES.map((range, index) => {
+                const active = String(f.minPrice) === range.min && String(f.maxPrice) === range.max;
+                return '<button data-range="' + index + '" class="shrink-0 px-2.5 py-1 rounded-full text-[10px] font-extrabold border transition-all ' +
+                    (active
+                        ? 'bg-[#00E676]/15 text-[#00E676] border-[#00E676]/40'
+                        : 'bg-[#0B0E17]/65 text-[#475569] border-white/[0.05]') + '">' +
+                    esc(t(range.key)) + '</button>';
+            }).join('');
+            wrap.querySelectorAll('[data-range]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const range = FEED_QUICK_RANGES[Number(btn.getAttribute('data-range'))];
+                    state.feedFilters.minPrice = range.min;
+                    state.feedFilters.maxPrice = range.max;
+                    $('#feedPriceMin').value = range.min;
+                    $('#feedPriceMax').value = range.max;
+                    haptic('light');
+                    renderQuickRanges();
+                    refreshFeed();
+                });
+            });
+            makeHorizontalScrollable(wrap);
+        }
+
+        function applyFeedList(rawList, animate) {
+            const normalize = isTelegramEnv ? normalizeSignal : normalizeBackendSignal;
+            const items = (rawList || []).map(normalize).sort((a, b) => b._ts - a._ts);
+            const fresh = new Set();
+            items.forEach(sig => {
+                if (!state.knownFeedUrls.has(sig._key)) {
+                    state.knownFeedUrls.add(sig._key);
+                    fresh.add(sig._key);
+                }
+            });
+            state.feed = items.slice(0, FEED_CAP);
+            renderFeed(animate ? fresh : new Set());
+            updateSniperStats();
+        }
+
+        async function refreshFeed() {
+            try {
+                applyFeedList(await fetchFeedList(), true);
+                $('#feedUpdated').textContent = 'live · ' + new Date().toLocaleTimeString();
+            } catch (e) { /* временная сеть — оставляем прошлую ленту */ }
         }
 
         function feedMatchesFilter(sig) {
+            const source = sig.source || 'getgems';
+            // Фильтр MRKT — связки: лот дешевле топ-бида автобая MRKT.
+            if (state.sourceFilter === 'mrkt') {
+                const info = state.floors[sig.gift_name] || {};
+                const bid = Number(info.mrktBid);
+                if (!Number.isFinite(bid) || bid <= 0) return false;
+                if (sig.deal_price >= bid) return false;
+            } else if (state.sourceFilter !== 'all' && source !== state.sourceFilter) {
+                return false;
+            }
+            // Лента снайпера — только реальные сделки: цена ниже эталона и
+            // положительный профит после комиссий. Наценки над флором не
+            // показываем даже если они как-то попали в состояние.
+            if (!(sig.discount_pct > 0 && sig.net_profit_ton > 0)) return false;
+            if (sig.deal_price >= sig.floor_price) return false;
+            if (sig.gift_name !== 'Plush Pepe' && String(sig.floor_basis || '').startsWith('model:')) return false;
+            const filters = state.feedFilters;
+            const needle = filters.q.trim().toLowerCase();
+            if (needle) {
+                const haystack = (String(sig.gift_name || '') + ' ' + String(sig.model || '')).toLowerCase();
+                if (!haystack.includes(needle)) return false;
+            }
+            const min = parseFloat(filters.minPrice);
+            const max = parseFloat(filters.maxPrice);
+            if (Number.isFinite(min) && sig.deal_price < min) return false;
+            if (Number.isFinite(max) && sig.deal_price > max) return false;
             if (state.filter === 'hot') return true;
             if (state.filter === 'd30') return sig.discount_pct >= HOT_THRESHOLD;
+            if (state.filter === 'd50') return sig.discount_pct >= 50;
+            if (state.filter === 'profit') return sig.net_profit_ton >= 5;
+            if (state.filter === 'rare') return !!(sig.model || (sig.floor_basis && String(sig.floor_basis).startsWith('model:')));
             const g = GIFT_BY_NAME[sig.gift_name];
             return !!g && g.id === state.filter;
         }
 
+        // Атрибут конкретного NFT (Model / Backdrop / Symbol) — то, чем один
+        // лот отличается от другого. Пустые атрибуты не рисуем.
+        function traitChip(value) {
+            if (!value) return '';
+            return '<span class="bg-white/[0.06] text-[#94A3B8] border border-white/10 text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md">' +
+                esc(value) + '</span>';
+        }
+
         function dealCardHTML(sig, animate) {
-            const gift = GIFT_BY_NAME[sig.gift_name] || { name: sig.gift_name, collection: '', image: FALLBACK_IMAGE };
+            const gift = GIFT_BY_NAME[sig.gift_name] || { name: sig.gift_name, image: FALLBACK_IMAGE };
             const isHot = sig.discount_pct >= HOT_THRESHOLD;
-            const image = sig.image_url || gift.image || FALLBACK_IMAGE;
-            // Подсветка NFT-блока под редкость лота: ember для HOT, изумруд для обычных снайпов.
+            let image = sig.image_url;
+            if ((!image || image.includes('/collection/')) && sig.lot_number && gift.fragmentSlug) {
+                const num = String(sig.lot_number).replace(/[^0-9]/g, '');
+                if (num) {
+                    image = fragmentModelImage(gift, num);
+                }
+            }
+            if (!image) image = gift.image || FALLBACK_IMAGE;
+            // Подсветка NFT-блока: ember для HOT, изумруд для обычных сделок.
             const glow = isHot ? 'bg-[#FF8A00]/30' : 'bg-[#00E676]/25';
             const tonkeeperUrl = sig.item_address ? ('https://app.tonkeeper.com/nft/' + sig.item_address) : null;
             const sourceLabel = String(sig.source || 'getgems').toUpperCase();
+            // Portals и Tonnel ведут в свои Mini App, поэтому кнопка
+            // называется «Open in Portals / Tonnel».
+            const marketLabel = (sig.source || 'getgems') === 'getgems' ? 'Getgems' : sourceLabel;
+            const snipeLabel = (sig.source || '') === 'portals'
+                ? 'Open in Portals'
+                : ((sig.source || '') === 'tonnel'
+                    ? 'Open in Tonnel'
+                    : 'Snipe on ' + marketLabel);
+            const modelName = sig.model || '';
+            // Эталон — флор этой модели (Leonardo у Plush Pepe), а не общий
+            // флор коллекции: подписываем, с чем именно сравнивали цену.
+            const basisModel = String(sig.floor_basis || '').startsWith('model:')
+                ? String(sig.floor_basis).slice(6) : '';
+            const floorLabel = basisModel
+                ? ('Floor · ' + esc(basisModel))
+                : (String(sig.floor_basis || '') === 'mrkt_bid' ? 'MRKT автобай' : 'Floor');
+            const traits = [sig.backdrop, sig.symbol].map(traitChip).join('');
 
             const badge = isHot
                 ? '<span class="ember-gradient text-[#0B0E17] text-[10px] font-extrabold uppercase tracking-widest px-2.5 py-1 rounded-md inline-flex items-center gap-1">' + iconSvg('i-flame', 'w-3 h-3') + 'Hot Liquidation −' + fmtTon(sig.discount_pct, 1) + '%</span>'
                 : '<span class="bg-[#00E676]/15 text-[#00E676] border border-[#00E676]/30 text-[10px] font-extrabold uppercase tracking-widest px-2.5 py-1 rounded-md inline-flex items-center gap-1">' + iconSvg('i-bolt', 'w-3 h-3') + '−' + fmtTon(sig.discount_pct, 1) + '% Below Floor</span>';
-
-            const profitPositive = sig.net_profit_ton > 0;
 
             const tonkeeperBtn = !tonkeeperUrl ? '' :
                 (state.user.is_pro
@@ -1128,26 +2273,26 @@
                         iconSvg('i-crown', 'w-5 h-5') + '</button>');
 
             return '' +
-            '<article data-url="' + esc(sig.marketplace_url) + '" class="' + (animate ? 'deal-enter ' : '') + 'relative rounded-2xl bg-[#131926]/75 backdrop-blur-xl border border-white/[0.08] p-4' + (isHot ? ' ring-1 ring-[#FF8A00]/25' : '') + '">' +
+            '<article data-url="' + esc(sig.marketplace_url) + '" class="deal-card ' + (animate ? 'deal-enter ' : '') + 'relative rounded-2xl bg-[#131926]/75 backdrop-blur-xl border border-white/[0.08] p-4' + (isHot ? ' ring-1 ring-[#FF8A00]/25' : '') + '">' +
                 '<div class="flex items-start justify-between mb-3">' +
                     badge +
                     '<span class="time-ago text-[10px] font-medium text-[#475569]" data-ts="' + sig._ts + '">' + timeAgo(sig._ts) + '</span>' +
                 '</div>' +
 
                 '<div class="flex items-center gap-3.5 mb-3">' +
-                    // NFT media block: реальная модель подарка, 3D-глубина + подсветка редкости
-                    // NFT media block: рендер конкретной модели сам является формой
-                    // (скруглён, object-cover) — без «фото в рамке»
-                    '<div class="relative shrink-0 w-16 h-16">' +
+                    // NFT media block: рендер конкретной модели (узор/фон этого NFT)
+                    '<div class="deal-media relative shrink-0 w-16 h-16">' +
                         '<div class="absolute -inset-1.5 rounded-2xl blur-xl ' + glow + '"></div>' +
-                        imgTag(image, gift.name, 'relative w-16 h-16 rounded-2xl object-cover ring-1 ring-white/15 shadow-[0_8px_20px_rgba(0,0,0,0.5)]') +
+                        imgTag(image, gift.name, 'deal-img relative w-16 h-16 rounded-2xl object-cover ring-1 ring-white/15 shadow-[0_8px_20px_rgba(0,0,0,0.5)]', '', gift.image || FALLBACK_IMAGE) +
                     '</div>' +
                     '<div class="flex-1 min-w-0">' +
-                        '<p class="text-[15px] font-extrabold tracking-tight leading-tight truncate">' + esc(gift.name) + '</p>' +
-                        '<p class="text-[10px] text-[#475569] font-bold uppercase tracking-widest mt-0.5">' +
+                        '<p class="deal-title text-[15px] font-extrabold tracking-tight leading-tight truncate">' + esc(gift.name) + '</p>' +
+                        '<p class="text-[10px] text-[#475569] font-bold uppercase tracking-widest mt-0.5 truncate">' +
                             '<span class="text-[#00F0FF]/90">' + esc(sourceLabel) + '</span>' +
-                            ' <span>·</span> ' + esc(gift.collection) + ' <span>·</span> ' + esc(sig.lot_number) +
+                            (modelName ? ' <span>·</span> <span class="text-white/75">' + esc(modelName) + '</span>' : '') +
+                            ' <span>·</span> ' + esc(sig.lot_number) +
                         '</p>' +
+                        (traits ? '<div class="flex flex-wrap gap-1 mt-1.5">' + traits + '</div>' : '') +
                     '</div>' +
                 '</div>' +
 
@@ -1155,11 +2300,11 @@
                     '<div class="flex items-end justify-between">' +
                         '<div>' +
                             '<p class="text-[9px] text-[#475569] uppercase font-bold tracking-widest mb-1">Buy Now</p>' +
-                            '<p class="num text-2xl font-extrabold tracking-tight text-[#00E676] text-glow-emerald">' + fmtTon(sig.deal_price) + ' TON</p>' +
+                            '<p class="deal-price num text-2xl font-extrabold tracking-tight text-[#00E676] text-glow-emerald">' + fmtTon(sig.deal_price) + ' TON</p>' +
                             '<p class="text-[10px] font-medium text-[#94A3B8] num mt-0.5">' + fmtUsd(sig.deal_price) + '</p>' +
                         '</div>' +
-                        '<div class="text-right">' +
-                            '<p class="text-[9px] text-[#475569] uppercase font-bold tracking-widest mb-1">Floor</p>' +
+                        '<div class="deal-floor text-right">' +
+                            '<p class="text-[9px] text-[#475569] uppercase font-bold tracking-widest mb-1">' + floorLabel + '</p>' +
                             '<p class="num text-base font-bold text-[#94A3B8] line-through decoration-[#E52E71]/70 decoration-2">' + fmtTon(sig.floor_price) + ' TON</p>' +
                             '<p class="text-[10px] font-medium text-[#475569] num mt-0.5">' + fmtUsd(sig.floor_price) + '</p>' +
                         '</div>' +
@@ -1168,20 +2313,18 @@
 
                 '<div class="flex items-center justify-between mb-3 px-1">' +
                     '<p class="text-[10px] text-[#475569] uppercase font-bold tracking-widest">Profit (Net After Fees)</p>' +
-                    '<p class="num text-sm font-extrabold ' + (profitPositive ? 'text-[#00E676]' : 'text-[#E52E71]') + '">' +
-                        (profitPositive ? '+' : '') + fmtTon(sig.net_profit_ton) + ' TON' +
-                        ' <span class="text-[#94A3B8] font-bold">(' + fmtUsd(sig.net_profit_ton) + ')</span>' +
-                    '</p>' +
+                    '<p class="num text-sm font-extrabold text-[#00E676]">+' + fmtTon(sig.net_profit_ton) + ' TON' +
+                      ' <span class="text-[#94A3B8] font-bold">(' + fmtUsd(sig.net_profit_ton) + ')</span></p>' +
                 '</div>' +
 
-                '<div class="flex gap-2">' +
+                '<div class="deal-actions flex gap-2">' +
                     '<button data-snipe="' + esc(sig.marketplace_url) + '" ' +
                         'class="snipe-btn flex-1 py-3 rounded-xl text-sm font-extrabold tracking-tight active:scale-[0.98] transition-transform inline-flex items-center justify-center gap-2 ' +
                         (isHot
                             ? 'ember-gradient text-[#0B0E17] shadow-[0_8px_28px_rgba(229,46,113,0.30)]'
                             : 'bg-[#00E676] text-[#0B0E17] shadow-[0_8px_28px_rgba(0,230,118,0.30)]') + '">' +
                         iconSvg('i-bolt', 'w-4 h-4') +
-                        '<span>Snipe on Getgems</span>' +
+                        '<span>' + esc(snipeLabel) + '</span>' +
                     '</button>' +
                     tonkeeperBtn +
                 '</div>' +
@@ -1193,11 +2336,26 @@
             const animate = animateUrls || new Set();
             const visible = state.feed.filter(feedMatchesFilter);
 
-            $('#feedEmpty').classList.toggle('hidden', visible.length > 0);
+            const empty = $('#feedEmpty');
+            empty.classList.toggle('hidden', visible.length > 0);
+            const emptyTitle = empty.querySelector('p.text-sm');
+            const emptySub = empty.querySelectorAll('p')[1];
+            if (feedFiltersActive()) {
+                if (emptyTitle) emptyTitle.textContent = t('feed.emptyFilterTitle');
+                if (emptySub) emptySub.innerHTML = t('feed.emptyFilterSub');
+            } else {
+                if (emptyTitle) emptyTitle.textContent = t('feed.emptyTitle');
+                if (emptySub) emptySub.innerHTML = t('feed.emptySub');
+            }
 
             list.innerHTML = visible.map(sig => dealCardHTML(sig, animate.has(sig._key || sig.marketplace_url))).join('');
 
             function openExternal(url) {
+                // t.me-ссылки (Portals/MRKT mini apps) открываем нативно в
+                // Telegram — иначе рабочий стол сначала кидает в браузер.
+                if (/^https:\/\/t\.me\//.test(url) && tg && tg.openTelegramLink) {
+                    try { tg.openTelegramLink(url); return; } catch (e) { /* fall through */ }
+                }
                 if (tg && tg.openLink) tg.openLink(url);
                 else window.open(url, '_blank');
             }
@@ -1225,10 +2383,15 @@
         }
 
         function updateSniperStats() {
-            const floors = Object.values(state.floors);
-            if (floors.length > 0) {
-                const avg = floors.reduce((acc, f) => acc + f.floor, 0) / floors.length;
-                $('#statFloorIndex').textContent = fmtTon(avg, 1) + ' TON';
+            // Медиана флоров вместо среднего: Plush Pepe за 6470 TON и Mousse
+            // Cake за 5 TON в одном среднем дают бессмысленный «индекс».
+            const floorValues = Object.values(state.floors)
+                .map(f => Number(f && f.floor))
+                .filter(v => Number.isFinite(v) && v > 0)
+                .sort((a, b) => a - b);
+            if (floorValues.length > 0) {
+                const median = floorValues[Math.floor(floorValues.length / 2)];
+                $('#statFloorIndex').textContent = fmtTon(median, 1) + ' TON';
             }
             $('#statSignals').textContent = String(state.feed.length);
             const best = state.feed.reduce((m, s) => Math.max(m, s.discount_pct), 0);
@@ -1247,11 +2410,51 @@
            9. RENDER — FLOORS MATRIX & FLIP CALCULATOR
            ============================================================ */
 
+        // Офферы платформ на карточке флора: Getgems (страница коллекции),
+        // Portals и MRKT (официальные Mini App). Tonnel убран: их API закрыт
+        // Cloudflare и лотов оттуда нет. Флоры маркетов подписаны, чтобы
+        // было видно, где дешевле.
+        function floorOfferLinks(gift) {
+            const urls = (gift.offerUrls) || {
+                getgems: gift.address ? ('https://getgems.io/collection/' + gift.address)
+                    : ('https://getgems.io/search?text=' + encodeURIComponent(gift.name)),
+                portals: 'https://t.me/portals/market?startapp=to_market',
+                mrkt: 'https://t.me/mrkt/app',
+            };
+            const mf = gift.marketFloors || {};
+            const chips = [
+                { id: 'getgems', label: 'GG', url: urls.getgems, floor: mf.getgems },
+                { id: 'portals', label: 'Portals', url: urls.portals, floor: mf.portals },
+                { id: 'mrkt',    label: 'MRKT', url: urls.mrkt,    floor: mf.tgmrkt || mf.mrkt },
+            ].filter(c => c.url);
+            if (!chips.length) return '';
+            return '<div class="flex flex-wrap gap-1 mt-2.5" data-offers>' + chips.map(c =>
+                '<span data-offer-url="' + esc(c.url) + '" role="link" tabindex="0" ' +
+                    'class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[#0B0E17]/65 border border-white/[0.06] text-[9px] font-extrabold uppercase tracking-widest text-[#94A3B8] active:scale-[0.95] transition-transform cursor-pointer">' +
+                    '<span class="text-[#00F0FF]/80">' + esc(c.label) + '</span>' +
+                    (Number(c.floor) > 0 ? '<span class="num text-white/70">' + fmtTon(c.floor, 1) + '</span>' : '') +
+                '</span>'
+            ).join('') + '</div>';
+        }
+
         function renderFloors() {
             const grid = $('#floorsGrid');
-            grid.innerHTML = GIFTS.map(g => {
-                const f = state.floors[g.name] || { floor: g.baseFloor, change24h: 0, liquidity: pickLiquidity(g.id) };
-                const up = f.change24h >= 0;
+            const query = (state.floorQuery || '').trim().toLowerCase();
+            const visible = query ? GIFTS.filter(g => g.name.toLowerCase().includes(query)) : GIFTS;
+            if (!visible.length) {
+                grid.innerHTML = '<p class="col-span-2 text-center text-[11px] text-[#475569] py-6">Ничего не найдено</p>';
+                return;
+            }
+            grid.innerHTML = visible.map(g => {
+                const f = state.floors[g.name] || { floor: g.baseFloor, change24h: null, liquidity: pickLiquidity(g.id) };
+                // Датасет отдает только текущий флор: пока истории меньше суток,
+                // честного изменения за 24ч нет — рисуем прочерк, а не «0.0%».
+                const changeValue = (f.change24h === null || f.change24h === undefined)
+                    ? NaN : Number(f.change24h);
+                const changeHtml = Number.isFinite(changeValue)
+                    ? '<p class="num text-[11px] font-extrabold ' + (changeValue >= 0 ? 'text-[#00E676]' : 'text-[#E52E71]') + '">' +
+                        (changeValue >= 0 ? '▲' : '▼') + ' ' + Math.abs(changeValue).toFixed(1) + '%</p>'
+                    : '<p class="text-[10px] font-bold text-[#475569] uppercase tracking-widest">24h —</p>';
                 return '' +
                 '<button data-floor-gift="' + g.id + '" class="text-left rounded-2xl bg-[#131926]/75 backdrop-blur-xl border border-white/[0.08] p-3.5 active:scale-[0.97] transition-transform">' +
                     '<div class="flex items-start justify-between mb-2.5">' +
@@ -1262,16 +2465,50 @@
                         '<span class="text-[9px] font-extrabold uppercase tracking-widest ' + (f.liquidity ? f.liquidity.cls : 'text-[#475569]') + '">' + (f.liquidity ? f.liquidity.label : '') + '</span>' +
                     '</div>' +
                     '<p class="text-[13px] font-extrabold tracking-tight leading-tight truncate">' + esc(g.name) + '</p>' +
-                    '<p class="text-[9px] text-[#475569] font-bold uppercase tracking-widest mt-0.5 truncate">' + esc(g.collection) + '</p>' +
+                    // Реальное имя NFT-коллекции (Plush Pepes, Ion Gems), если оно
+                    // отличается от имени подарка; выдуманных групп больше нет.
+                    (g.asset && g.asset !== g.name
+                        ? '<p class="text-[9px] text-[#475569] font-bold uppercase tracking-widest mt-0.5 truncate">' + esc(g.asset) + '</p>'
+                        : '') +
                     '<div class="mt-2.5 flex items-baseline justify-between">' +
                         '<p class="num text-[17px] font-extrabold tracking-tight">' + fmtTon(f.floor, 1) + ' <span class="text-[10px] text-[#94A3B8] font-bold">TON</span></p>' +
                     '</div>' +
                     '<div class="flex items-center justify-between mt-1">' +
                         '<p class="text-[10px] font-medium text-[#94A3B8] num">' + fmtUsd(f.floor) + '</p>' +
-                        '<p class="num text-[11px] font-extrabold ' + (up ? 'text-[#00E676]' : 'text-[#E52E71]') + '">' + (up ? '▲' : '▼') + ' ' + Math.abs(f.change24h).toFixed(1) + '%</p>' +
+                        changeHtml +
                     '</div>' +
+                    // Офферы всех 3 платформ: клик открывает маркет, а не калькулятор.
+                    floorOfferLinks(g) +
                 '</button>';
             }).join('');
+
+            // Подзаголовок: сколько коллекций в каталоге и есть ли уже история 24ч.
+            const subtitle = $('#floorsSubtitle');
+            if (subtitle) {
+                const withHistory = Object.values(state.floors).some(
+                    f => f && f.change24h !== null && f.change24h !== undefined
+                );
+                const count = GIFTS.length;
+                subtitle.textContent = t('floors.subtitle', { n: count })
+                    + (withHistory ? '' : t('floors.history'));
+            }
+
+            // Ссылки на офферы: открываем маркет и глушим всплытие,
+            // чтобы не дергался клик карточки (калькулятор). t.me-ссылки —
+            // нативно в Telegram, без браузера.
+            grid.querySelectorAll('[data-offer-url]').forEach(el => {
+                el.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    haptic('light');
+                    const url = el.getAttribute('data-offer-url');
+                    if (/^https:\/\/t\.me\//.test(url) && tg && tg.openTelegramLink) {
+                        try { tg.openTelegramLink(url); return; } catch (err) { /* fall through */ }
+                    }
+                    if (tg && tg.openLink) tg.openLink(url);
+                    else window.open(url, '_blank');
+                });
+            });
 
             grid.querySelectorAll('[data-floor-gift]').forEach(card => {
                 card.addEventListener('click', () => {
@@ -1280,44 +2517,186 @@
                     if (gift) {
                         haptic('light');
                         selectCalcGift(gift);
-                        toast(gift.name + ' загружен в калькулятор');
+                        toast(t('calc.loadedToCalc', { name: gift.name }));
                     }
                 });
             });
         }
 
-        function renderCalcChips() {
-            const wrap = $('#calcGiftChips');
-            wrap.innerHTML = GIFTS.map(g => {
-                const active = state.calcGift.id === g.id;
-                return '<button data-calc-gift="' + g.id + '" class="shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all inline-flex items-center gap-1.5 ' +
-                    (active ? 'bg-[#00E676]/15 text-[#00E676] border-[#00E676]/40' : 'bg-[#0B0E17]/65 text-[#94A3B8] border-white/[0.05]') + '">' +
-                    imgTag(g.image, g.name, 'w-5 h-5 rounded-[6px] object-cover ring-1 ring-white/10') +
-                    esc(g.name) + '</button>';
-            }).join('');
-
-            wrap.querySelectorAll('[data-calc-gift]').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const gift = GIFTS.find(g => g.id === btn.getAttribute('data-calc-gift'));
-                    if (gift) { haptic('light'); selectCalcGift(gift); }
-                });
-            });
+        // Флор для калькулятора: флор выбранной модели, иначе флор коллекции.
+        function calcFloor() {
+            const model = state.calcModel;
+            if (model && Number.isFinite(Number(model.floor)) && Number(model.floor) > 0) {
+                return Number(model.floor);
+            }
+            const info = state.floors[state.calcGift.name];
+            if (info && Number.isFinite(Number(info.floor)) && Number(info.floor) > 0) {
+                return Number(info.floor);
+            }
+            return Number(state.calcGift.baseFloor || 0);
         }
 
-        function selectCalcGift(gift) {
+        function renderCalcChips() {
+            const title = $('#calcPickerTitle');
+            const subtitle = $('#calcPickerSubtitle');
+            const icon = $('#calcPickerIcon');
+            if (!title) return;
+            const gift = state.calcGift;
+            const model = state.calcModel;
+            title.textContent = model ? (gift.name + ' · ' + model.name) : gift.name;
+            const floor = calcFloor();
+            subtitle.textContent = model
+                ? t('calc.modelFloor', { floor: fmtTon(floor, 1) })
+                : t('calc.collectionFloor', { floor: fmtTon(floor, 1) });
+            if (icon) {
+                icon.innerHTML = imgTag(gift.image, gift.name, 'w-10 h-10 object-cover');
+            }
+        }
+
+        function selectCalcGift(gift, model) {
             state.calcGift = gift;
+            state.calcModel = model || null;
             renderCalcChips();
-            const f = state.floors[gift.name];
-            const floor = f ? f.floor : gift.baseFloor;
+            const floor = calcFloor();
             $('#calcFloorHint').textContent = fmtTon(floor, 1) + ' TON';
             // default buy price: 20% below floor
             $('#calcBuyPrice').value = (floor * 0.8).toFixed(1);
             recalcFlip();
         }
 
+        // ---- Пикер: коллекции -> модели (как на Tonnel/Portals) ----
+        function openCalcPicker() {
+            state.calcPicker = { mode: 'gift', gift: null, query: '' };
+            $('#calcPickerOverlay').classList.remove('hidden');
+            $('#calcPickerSearch').value = '';
+            renderCalcPicker();
+            setTimeout(() => { try { $('#calcPickerSearch').focus(); } catch (e) { /* noop */ } }, 50);
+        }
+
+        function closeCalcPicker() {
+            $('#calcPickerOverlay').classList.add('hidden');
+        }
+
+        function pickerRow(options) {
+            return '<button ' + options.attr + ' class="w-full flex items-center gap-3 rounded-xl bg-[#0B0E17]/65 border border-white/[0.06] p-2.5 text-left active:scale-[0.99] transition-transform">' +
+                (options.image
+                    ? '<span class="shrink-0 w-9 h-9 rounded-lg overflow-hidden ring-1 ring-white/10">' + options.image + '</span>'
+                    : '<span class="shrink-0 w-9 h-9 rounded-lg bg-[#131926] border border-white/[0.06] flex items-center justify-center text-[#00F0FF]">' + iconSvg('i-star', 'w-4 h-4') + '</span>') +
+                '<span class="flex-1 min-w-0">' +
+                    '<span class="block text-[13px] font-extrabold tracking-tight truncate">' + esc(options.title) + '</span>' +
+                    (options.subtitle
+                        ? '<span class="block text-[10px] font-bold uppercase tracking-widest text-[#475569] mt-0.5 truncate">' + esc(options.subtitle) + '</span>'
+                        : '') +
+                '</span>' +
+                (options.value
+                    ? '<span class="shrink-0 num text-[12px] font-extrabold text-[#94A3B8]">' + esc(options.value) + '</span>'
+                    : '') +
+            '</button>';
+        }
+
+        function renderCalcPicker() {
+            const list = $('#calcPickerList');
+            const heading = $('#calcPickerHeading');
+            const subheading = $('#calcPickerSubheading');
+            const backBtn = $('#calcPickerBack');
+            if (!list) return;
+
+            const picker = state.calcPicker;
+            const query = (picker.query || '').trim().toLowerCase();
+
+            if (picker.mode === 'gift') {
+                heading.textContent = t('calc.pickGift');
+                subheading.textContent = t('calc.pickSub', { n: GIFTS.length });
+                backBtn.classList.add('hidden');
+                const items = GIFTS.filter(g => !query || g.name.toLowerCase().includes(query));
+                if (!items.length) {
+                    list.innerHTML = '<p class="text-center text-[11px] text-[#475569] py-6">' + esc(t('calc.nothing')) + '</p>';
+                    return;
+                }
+                list.innerHTML = items.map(g => {
+                    const info = state.floors[g.name];
+                    const floor = info && Number.isFinite(Number(info.floor)) ? Number(info.floor) : null;
+                    return pickerRow({
+                        attr: 'data-pick-gift="' + esc(g.name) + '"',
+                        image: imgTag(g.image, g.name, 'w-9 h-9 object-cover'),
+                        title: g.name,
+                        subtitle: g.asset && g.asset !== g.name ? g.asset : t('calc.collection'),
+                        value: floor !== null ? fmtTon(floor, 1) + ' TON' : '—',
+                    });
+                }).join('');
+                list.querySelectorAll('[data-pick-gift]').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const name = btn.getAttribute('data-pick-gift');
+                        const gift = GIFT_BY_NAME[name];
+                        if (!gift) return;
+                        haptic('light');
+                        state.calcPicker = { mode: 'model', gift: gift, query: '' };
+                        $('#calcPickerSearch').value = '';
+                        loadCalcModels(gift.name);
+                    });
+                });
+                return;
+            }
+
+            // Модели выбранной коллекции.
+            const gift = picker.gift;
+            heading.textContent = gift.name;
+            const cache = state.modelsByGift[gift.name];
+            subheading.textContent = cache === undefined
+                ? t('calc.loadingModels')
+                : (cache && cache.length ? t('calc.modelsCount', { n: cache.length }) : t('calc.modelsMissing'));
+            backBtn.classList.remove('hidden');
+
+            if (cache === undefined) {
+                list.innerHTML = '<p class="text-center text-[11px] text-[#475569] py-6">' + esc(t('calc.loadingModels')) + '</p>';
+                return;
+            }
+            if (cache === null) {
+                list.innerHTML = '<p class="text-center text-[11px] text-[#E52E71] py-6">' + esc(t('calc.modelsFailed')) + '</p>';
+                return;
+            }
+            const models = cache.filter(m => !query || m.name.toLowerCase().includes(query));
+            if (!models.length) {
+                list.innerHTML = '<p class="text-center text-[11px] text-[#475569] py-6">' +
+                    esc(cache.length ? t('calc.nothing') : t('calc.modelsUnavailable')) + '</p>';
+                return;
+            }
+            list.innerHTML = models.map(m => pickerRow({
+                attr: 'data-pick-model="' + esc(m.name) + '"',
+                image: m.image ? imgTag(m.image, m.name, 'w-9 h-9 object-cover') : null,
+                title: m.name,
+                subtitle: t('calc.model'),
+                value: fmtTon(m.floor, 1) + ' TON',
+            })).join('');
+            list.querySelectorAll('[data-pick-model]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const modelName = btn.getAttribute('data-pick-model');
+                    const model = cache.find(m => m.name === modelName);
+                    if (!model) return;
+                    haptic('medium');
+                    closeCalcPicker();
+                    selectCalcGift(gift, model);
+                    toast(gift.name + ' · ' + model.name + ' — ' + fmtTon(model.floor, 1) + ' TON');
+                });
+            });
+        }
+
+        async function loadCalcModels(giftName) {
+            state.modelsByGift[giftName] = undefined;
+            renderCalcPicker();
+            try {
+                const path = (isTelegramEnv ? '/api/gifts/models?name=' : '/api/demo/models?name=') +
+                    encodeURIComponent(giftName);
+                const data = await api(path);
+                state.modelsByGift[giftName] = Array.isArray(data.models) ? data.models : [];
+            } catch (e) {
+                state.modelsByGift[giftName] = null;
+            }
+            renderCalcPicker();
+        }
+
         function recalcFlip() {
-            const f = state.floors[state.calcGift.name];
-            const floor = f ? f.floor : state.calcGift.baseFloor;
+            const floor = calcFloor();
             const buy = parseFloat($('#calcBuyPrice').value);
 
             $('#calcFloorHint').textContent = fmtTon(floor, 1) + ' TON';
@@ -1328,16 +2707,17 @@
                 $('#calcRoi').textContent = '—';
                 $('#calcRoi').className = 'num text-sm font-extrabold text-[#94A3B8]';
                 $('#calcSellLine').textContent = '—';
-                $('#calcFeeLine').textContent = '—';
+                const feeEl = $('#calcFeeAmount');
+                if (feeEl) feeEl.textContent = '—';
                 $('#calcBreakeven').textContent = '—';
                 return;
             }
 
-            const gross = floor * (1 - GETGEMS_FEE);
-            const fee = floor * GETGEMS_FEE;
-            const net = netProfit(floor, buy);
+            const activeFee = (typeof state.calcFee === 'number') ? state.calcFee : GETGEMS_FEE;
+            const net = netProfit(floor, buy, activeFee);
             const roi = (net / buy) * 100;
-            const breakeven = floor * (1 - GETGEMS_FEE) - TON_GAS; // max buy price for zero profit
+            const feeTon = floor * activeFee;
+            const breakeven = floor * (1 - activeFee) - TON_GAS; // max buy price for zero profit
 
             const netEl = $('#calcNet');
             netEl.textContent = (net >= 0 ? '+' : '') + fmtTon(net) + ' TON';
@@ -1348,7 +2728,8 @@
             roiEl.className = 'num text-sm font-extrabold ' + (roi >= 0 ? 'text-[#00E676]' : 'text-[#E52E71]');
 
             $('#calcSellLine').textContent = fmtTon(floor, 1) + ' TON';
-            $('#calcFeeLine').textContent = '−' + fmtTon(fee) + ' TON';
+            const feeAmountEl = $('#calcFeeAmount');
+            if (feeAmountEl) feeAmountEl.textContent = fmtTon(feeTon, 2) + ' TON';
             $('#calcBreakeven').textContent = fmtTon(breakeven) + ' TON';
         }
 
@@ -1392,18 +2773,32 @@
         function selectAlertGift(gift) {
             state.alertGift = gift;
             renderAlertGiftChips();
+            syncAlertPriceFromSlider();
             updateAlertPriceLabel();
         }
 
         function alertPriceValue() {
-            // slider 20..120 -> % of current floor
+            // Точная цена из поля ввода; слайдер — быстрый выбор % от флора.
+            const typed = parseFloat($('#alertPriceInput') ? $('#alertPriceInput').value : '');
+            if (Number.isFinite(typed) && typed >= 0) return +typed.toFixed(2);
             const pct = parseInt($('#alertPriceRange').value, 10);
             const f = state.floors[state.alertGift.name];
             const floor = f ? f.floor : state.alertGift.baseFloor;
-            return +(floor * pct / 100).toFixed(1);
+            return +(floor * pct / 100).toFixed(2);
+        }
+
+        function syncAlertPriceFromSlider() {
+            const input = $('#alertPriceInput');
+            if (!input) return;
+            const pct = parseInt($('#alertPriceRange').value, 10);
+            const f = state.floors[state.alertGift.name];
+            const floor = f ? f.floor : state.alertGift.baseFloor;
+            input.value = (floor * pct / 100).toFixed(2);
         }
 
         function updateAlertPriceLabel() {
+            const input = $('#alertPriceInput');
+            if (input && !input.value) syncAlertPriceFromSlider();
             $('#alertPriceLabel').textContent = fmtTon(alertPriceValue(), 1) + ' TON';
             $('#alertDiscountLabel').textContent = '−' + $('#alertDiscountRange').value + '%';
         }
@@ -1438,18 +2833,60 @@
                             '<span class="text-[#00E676]">−' + fmtTon(a.min_discount, 0) + '%+</span>' +
                         '</p>' +
                     '</div>' +
-                    '<button data-del-alert="' + a.id + '" title="Удалить алерт" class="w-9 h-9 rounded-full bg-[#E52E71]/10 border border-[#E52E71]/30 text-[#E52E71] active:scale-90 transition-transform inline-flex items-center justify-center">' +
+                    '<button data-edit-alert="' + a.id + '" title="' + esc(t('alerts.editTitle')) + '" class="w-9 h-9 rounded-full bg-[#00F0FF]/10 border border-[#00F0FF]/30 text-[#00F0FF] active:scale-90 transition-transform inline-flex items-center justify-center">' +
+                        '<svg class="w-4 h-4" fill="none" aria-hidden="true"><use href="#i-edit"></use></svg>' +
+                    '</button>' +
+                    '<button data-del-alert="' + a.id + '" title="' + esc(t('alerts.deleteTitle')) + '" class="w-9 h-9 rounded-full bg-[#E52E71]/10 border border-[#E52E71]/30 text-[#E52E71] active:scale-90 transition-transform inline-flex items-center justify-center">' +
                         '<svg class="w-4 h-4" fill="none" aria-hidden="true"><use href="#i-x"></use></svg>' +
                     '</button>' +
                 '</div>';
             }).join('');
+
+            list.querySelectorAll('[data-edit-alert]').forEach(btn => {
+                btn.addEventListener('click', () => startEditAlert(btn.getAttribute('data-edit-alert')));
+            });
 
             list.querySelectorAll('[data-del-alert]').forEach(btn => {
                 btn.addEventListener('click', () => deleteAlert(btn.getAttribute('data-del-alert')));
             });
         }
 
+        function startEditAlert(id) {
+            const alert = state.alerts.find(a => String(a.id) === String(id));
+            if (!alert) return;
+            const gift = GIFT_BY_NAME[alert.gift_name];
+            if (!gift) return;
+
+            state.editingAlert = alert;
+            selectAlertGift(gift);
+
+            const floor = (state.floors[gift.name] && state.floors[gift.name].floor) || gift.baseFloor;
+            const pct = Math.max(1, Math.min(150, Math.round((alert.max_price / floor) * 100)));
+            $('#alertPriceRange').value = String(pct);
+            if ($('#alertPriceInput')) $('#alertPriceInput').value = String(alert.max_price);
+            $('#alertDiscountRange').value = String(Math.max(5, Math.min(50, Math.round(alert.min_discount))));
+            updateAlertPriceLabel();
+
+            $('#createAlertLabel').textContent = t('alerts.saveChanges');
+            $('#cancelEditBtn').classList.remove('hidden');
+            $('#createAlertBtn').scrollIntoView({ behavior: 'smooth', block: 'center' });
+            haptic('light');
+            toast(t('alerts.editing') + alert.gift_name);
+        }
+
+        function cancelAlertEdit() {
+            state.editingAlert = null;
+            $('#createAlertLabel').textContent = t('alerts.create');
+            $('#cancelEditBtn').classList.add('hidden');
+            haptic('light');
+        }
+
         async function createAlert() {
+            if (state.editingAlert) {
+                await saveAlertEdit();
+                return;
+            }
+
             const gift = state.alertGift;
             const maxPrice = alertPriceValue();
             const minDiscount = parseFloat($('#alertDiscountRange').value);
@@ -1458,7 +2895,7 @@
                 haptic('error');
                 $('#createAlertBtn').classList.add('shake');
                 setTimeout(() => $('#createAlertBtn').classList.remove('shake'), 420);
-                toast('FREE-лимит: 1 алерт. Оформи PRO для безлимита', 'warn');
+                toast(t('alerts.limitToast'), 'warn');
                 return;
             }
 
@@ -1472,7 +2909,7 @@
                 saveDemoAlerts();
                 renderAlerts();
                 haptic('success');
-                toast('Алерт создан: ' + gift.name + ' ≤ ' + fmtTon(maxPrice, 1) + ' TON');
+                toast(t('alerts.createdPrice', { name: gift.name, price: fmtTon(maxPrice, 1) }));
                 return;
             }
 
@@ -1484,10 +2921,45 @@
                 state.alerts.push(created);
                 renderAlerts();
                 haptic('success');
-                toast('Алерт создан: ' + gift.name);
+                toast(t('alerts.created') + gift.name);
             } catch (err) {
                 haptic('error');
-                toast('Не удалось создать алерт: ' + err.message, 'error');
+                toast(t('alerts.createFailed') + err.message, 'error');
+            }
+        }
+
+        async function saveAlertEdit() {
+            const alert = state.editingAlert;
+            if (!alert) return;
+
+            const gift = state.alertGift;
+            const body = {
+                gift_name: gift.name,
+                max_price: alertPriceValue(),
+                min_discount: parseFloat($('#alertDiscountRange').value),
+            };
+
+            if (state.demo) {
+                Object.assign(alert, body);
+                saveDemoAlerts();
+                cancelAlertEdit();
+                renderAlerts();
+                haptic('success');
+                toast(t('alerts.updated') + gift.name);
+                return;
+            }
+
+            try {
+                const updated = await api('/api/alerts/' + alert.id, { method: 'PATCH', body: body });
+                const idx = state.alerts.findIndex(a => String(a.id) === String(alert.id));
+                if (idx >= 0) state.alerts[idx] = updated;
+                cancelAlertEdit();
+                renderAlerts();
+                haptic('success');
+                toast(t('alerts.updated') + gift.name);
+            } catch (err) {
+                haptic('error');
+                toast(t('alerts.updateFailed') + err.message, 'error');
             }
         }
 
@@ -1497,7 +2969,7 @@
                 saveDemoAlerts();
                 renderAlerts();
                 haptic('light');
-                toast('Алерта удален');
+                toast(t('alerts.deleted'));
                 return;
             }
             try {
@@ -1505,10 +2977,10 @@
                 state.alerts = state.alerts.filter(a => String(a.id) !== String(id));
                 renderAlerts();
                 haptic('light');
-                toast('Алерта удален');
+                toast(t('alerts.deleted'));
             } catch (err) {
                 haptic('error');
-                toast('Ошибка удаления: ' + err.message, 'error');
+                toast(t('alerts.deleteFailed') + err.message, 'error');
             }
         }
 
@@ -1541,6 +3013,60 @@
             $('#buyProBtn').textContent = state.user.is_pro
                 ? 'Продлить / улучшить — ' + PLAN_META[state.selectedPlan].btn.replace('Активировать ', '')
                 : PLAN_META[state.selectedPlan].btn;
+
+            renderDiscountFilter();
+        }
+
+        const DISCOUNT_OPTIONS = [0, 15, 20, 25, 30, 40];
+
+        function renderDiscountFilter() {
+            const wrap = $('#discountFilterChips');
+            if (!wrap) return;
+            const current = Number(state.user.min_discount || 0);
+            const isPro = !!state.user.is_pro;
+
+            wrap.innerHTML = DISCOUNT_OPTIONS.map(v => {
+                const active = Math.abs(current - v) < 0.01;
+                const label = v === 0 ? 'Выкл' : 'от −' + v + '%';
+                return '<button data-discount="' + v + '" class="shrink-0 px-3.5 py-2 rounded-full text-[11px] font-bold border transition-all ' +
+                    (active
+                        ? 'bg-[#00F0FF]/15 text-[#00F0FF] border-[#00F0FF]/40'
+                        : 'bg-[#0B0E17]/65 text-[#94A3B8] border-white/[0.05]') + '">' +
+                    label + '</button>';
+            }).join('');
+
+            wrap.querySelectorAll('[data-discount]').forEach(btn => {
+                btn.addEventListener('click', () => saveDiscountFilter(Number(btn.getAttribute('data-discount'))));
+            });
+
+            const note = $('#discountFilterNote');
+            if (note) note.classList.toggle('hidden', isPro);
+        }
+
+        async function saveDiscountFilter(value) {
+            state.user.min_discount = value;
+            haptic('light');
+            renderDiscountFilter();
+
+            if (state.demo) {
+                try { localStorage.setItem('gt_demo_min_discount', String(value)); } catch (e) { /* private mode */ }
+                toast(value > 0 ? 'Порог сохранён: от −' + value + '%' : 'Фильтр выключен');
+                return;
+            }
+
+            try {
+                const resp = await api('/api/user/settings', {
+                    method: 'POST',
+                    body: { min_discount: value },
+                });
+                state.user.min_discount = resp.min_discount;
+                toast(value > 0
+                    ? (resp.is_pro ? 'Порог активен: от −' + value + '%' : 'Порог сохранён — включится после PRO')
+                    : 'Фильтр выключен');
+            } catch (err) {
+                haptic('error');
+                toast('Не удалось сохранить настройку: ' + err.message, 'error');
+            }
         }
 
         async function buyPro() {
@@ -1602,7 +3128,7 @@
         }
 
         function switchScreen(name) {
-            ['sniper', 'floors', 'alerts', 'vip'].forEach(s => {
+            ['sniper', 'floors', 'alerts', 'vip', 'profile'].forEach(s => {
                 const el = $('#screen-' + s);
                 if (el) {
                     if (s === name) { el.removeAttribute('hidden'); el.classList.remove('screen'); void el.offsetWidth; el.classList.add('screen'); }
@@ -1636,6 +3162,10 @@
                 image_url: raw.image_url || null,
                 item_address: raw.item_address || null,
                 source: raw.source || 'getgems',
+                model: raw.model || null,
+                backdrop: raw.backdrop || null,
+                symbol: raw.symbol || null,
+                floor_basis: raw.floor_basis || null,
                 created_at: raw.created_at,
                 _ts: isNaN(ts) ? Date.now() : ts,
                 _key: raw.marketplace_url,
@@ -1653,10 +3183,11 @@
             state.user = me;
             state.floors = {};
             floors.forEach(f => {
-                state.floors[f.name] = { floor: f.floor, change24h: f.change_24h, liquidity: f.liquidity };
+                state.floors[f.name] = { floor: f.floor, change24h: f.change_24h, liquidity: liquidityStyle(f.liquidity), marketFloors: f.market_floors || {}, mrktBid: Number(f.mrkt_bid) || null, offerUrls: f.offer_urls || null };
             });
-            state.feed = (feed || []).map(normalizeSignal).sort((a, b) => b._ts - a._ts);
-            state.feed.forEach(s => state.knownFeedUrls.add(s.marketplace_url));
+            applyCatalog(floors);
+            // Лента приходит уже отфильтрованной бэкендом (q / min_price / max_price).
+            applyFeedList(feed || [], false);
             state.alerts = alerts || [];
 
             updateUserChip();
@@ -1666,31 +3197,16 @@
         }
 
         function startRealPolling() {
-            state.realPollFeed = setInterval(async () => {
-                try {
-                    const feed = await api('/api/gifts/feed');
-                    const fresh = new Set();
-                    (feed || []).map(normalizeSignal).forEach(sig => {
-                        if (!state.knownFeedUrls.has(sig.marketplace_url)) {
-                            state.knownFeedUrls.add(sig.marketplace_url);
-                            state.feed.unshift(sig);
-                            fresh.add(sig.marketplace_url);
-                        }
-                    });
-                    if (state.feed.length > FEED_CAP) state.feed.length = FEED_CAP;
-                    renderFeed(fresh);
-                    updateSniperStats();
-                    $('#feedUpdated').textContent = 'live · ' + new Date().toLocaleTimeString();
-                } catch (e) { /* transient network error — keep polling */ }
-            }, 10000);
+            state.realPollFeed = setInterval(refreshFeed, 10000);
 
             state.realPollFloors = setInterval(async () => {
                 try {
                     const floors = await api('/api/gifts/floors');
                     state.floors = {};
                     floors.forEach(f => {
-                        state.floors[f.name] = { floor: f.floor, change24h: f.change_24h, liquidity: f.liquidity };
+                        state.floors[f.name] = { floor: f.floor, change24h: f.change_24h, liquidity: liquidityStyle(f.liquidity), marketFloors: f.market_floors || {}, mrktBid: Number(f.mrkt_bid) || null, offerUrls: f.offer_urls || null };
                     });
+                    applyCatalog(floors);
                     renderFloors();
                     recalcFlip();
                 } catch (e) { /* keep old floors */ }
@@ -1702,19 +3218,89 @@
            ============================================================ */
 
         function renderAll() {
+            renderSourceFilters();
             renderFilters();
+            renderQuickRanges();
             renderFeed();
             renderFloors();
             renderCalcChips();
             renderAlertGiftChips();
             renderAlerts();
             renderVip();
+            renderProfile();
             updateUserChip();
-            selectCalcGift(state.calcGift);
+            renderCalcChips();
+            recalcFlip();
             updateAlertPriceLabel();
         }
 
         function wireStaticEvents() {
+            const floorSearch = $('#floorSearch');
+            if (floorSearch) {
+                floorSearch.addEventListener('input', (e) => {
+                    state.floorQuery = e.target.value;
+                    renderFloors();
+                });
+            }
+
+            // Дефолтного ценового потолка нет — поля пустые до выбора диапазона.
+            const priceMaxInput = $('#feedPriceMax');
+            if (priceMaxInput && !priceMaxInput.value) {
+                priceMaxInput.value = state.feedFilters.maxPrice;
+            }
+
+            // Feed filters: коллекция/модель + диапазон цен. Запрос уходит
+            // на бэкенд с дебаунсом, чтобы не дёргать API на каждую букву.
+            let feedFilterTimer = null;
+            function scheduleFeedFilterRefresh() {
+                if (feedFilterTimer) clearTimeout(feedFilterTimer);
+                feedFilterTimer = setTimeout(() => { refreshFeed(); }, 350);
+            }
+
+            const giftSearch = $('#feedGiftSearch');
+            if (giftSearch) {
+                giftSearch.addEventListener('input', (e) => {
+                    state.feedFilters.q = e.target.value;
+                    // В демо-режиме фильтруем локально, в реальном — ждём бэкенд.
+                    if (!isTelegramEnv || state.demo) renderFeed();
+                    scheduleFeedFilterRefresh();
+                });
+            }
+
+            const priceMin = $('#feedPriceMin');
+            if (priceMin) {
+                priceMin.addEventListener('input', (e) => {
+                    state.feedFilters.minPrice = e.target.value;
+                    renderQuickRanges();
+                    if (!isTelegramEnv || state.demo) renderFeed();
+                    scheduleFeedFilterRefresh();
+                });
+            }
+
+            const priceMax = $('#feedPriceMax');
+            if (priceMax) {
+                priceMax.addEventListener('input', (e) => {
+                    state.feedFilters.maxPrice = e.target.value;
+                    renderQuickRanges();
+                    if (!isTelegramEnv || state.demo) renderFeed();
+                    scheduleFeedFilterRefresh();
+                });
+            }
+
+            const resetBtn = $('#feedReset');
+            if (resetBtn) {
+                resetBtn.addEventListener('click', () => {
+                    // Возврат к полному списку: без коллекции и без цены.
+                    state.feedFilters = { q: '', minPrice: '', maxPrice: '' };
+                    if (giftSearch) giftSearch.value = '';
+                    if (priceMin) priceMin.value = '';
+                    if (priceMax) priceMax.value = '';
+                    haptic('light');
+                    renderQuickRanges();
+                    refreshFeed();
+                });
+            }
+
             // Bottom navigation
             $$('.nav-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
@@ -1732,13 +3318,58 @@
                 }
             });
 
+            (function wireCalcPicker() {
+                const openBtn = $('#calcPickerBtn');
+                if (openBtn) openBtn.addEventListener('click', () => { haptic('light'); openCalcPicker(); });
+                const closeBtn = $('#calcPickerClose');
+                if (closeBtn) closeBtn.addEventListener('click', closeCalcPicker);
+                const backdrop = $('#calcPickerBackdrop');
+                if (backdrop) backdrop.addEventListener('click', closeCalcPicker);
+                const backBtn = $('#calcPickerBack');
+                if (backBtn) backBtn.addEventListener('click', () => {
+                    state.calcPicker = { mode: 'gift', gift: null, query: '' };
+                    $('#calcPickerSearch').value = '';
+                    renderCalcPicker();
+                });
+                const search = $('#calcPickerSearch');
+                if (search) search.addEventListener('input', (e) => {
+                    state.calcPicker.query = e.target.value;
+                    renderCalcPicker();
+                });
+            })();
+
             // Flip calculator
             $('#calcBuyPrice').addEventListener('input', recalcFlip);
+            const feeChipsContainer = $('#calcFeeChips');
+            if (feeChipsContainer) {
+                feeChipsContainer.addEventListener('click', (e) => {
+                    const btn = e.target.closest('.calc-fee-btn');
+                    if (!btn) return;
+                    const fee = parseFloat(btn.getAttribute('data-fee'));
+                    if (isNaN(fee)) return;
+                    haptic('light');
+                    state.calcFee = fee;
+                    feeChipsContainer.querySelectorAll('.calc-fee-btn').forEach(b => {
+                        const active = parseFloat(b.getAttribute('data-fee')) === fee;
+                        b.className = 'calc-fee-btn px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase border transition-all ' +
+                            (active ? 'bg-[#00F0FF]/15 text-[#00F0FF] border-[#00F0FF]/40' : 'bg-[#0B0E17]/65 text-[#94A3B8] border-white/[0.05]');
+                    });
+                    const pctLabel = $('#calcFeePercentLabel');
+                    if (pctLabel) pctLabel.textContent = (fee * 100).toFixed(0) + '%';
+                    recalcFlip();
+                });
+            }
 
             // Alerts builder
-            $('#alertPriceRange').addEventListener('input', updateAlertPriceLabel);
+            $('#alertPriceRange').addEventListener('input', () => {
+                syncAlertPriceFromSlider();
+                updateAlertPriceLabel();
+            });
+            const alertPriceInput = $('#alertPriceInput');
+            if (alertPriceInput) alertPriceInput.addEventListener('input', updateAlertPriceLabel);
             $('#alertDiscountRange').addEventListener('input', updateAlertPriceLabel);
             $('#createAlertBtn').addEventListener('click', createAlert);
+            $('#cancelEditBtn').addEventListener('click', cancelAlertEdit);
 
             // VIP plans
             $('#planMonth').addEventListener('click', () => {
@@ -1752,6 +3383,23 @@
                 renderVip();
             });
             $('#buyProBtn').addEventListener('click', buyPro);
+
+            // Подключаем горизонтальный скролл (колесиком мыши и drag-перетаскиванием)
+            document.querySelectorAll('.overflow-x-auto, .h-scrollable, #feedFilters, #feedQuickRanges, #sourceFilters, #alertGiftChips, #discountFilterChips').forEach(makeHorizontalScrollable);
+
+            // Блокируем выделение текста и перетаскивание картинок мышью на ПК
+            document.addEventListener('selectstart', (e) => {
+                const tag = (e.target && e.target.tagName ? e.target.tagName : '').toUpperCase();
+                if (tag !== 'INPUT' && tag !== 'TEXTAREA') {
+                    e.preventDefault();
+                }
+            });
+            document.addEventListener('dragstart', (e) => {
+                const tag = (e.target && e.target.tagName ? e.target.tagName : '').toUpperCase();
+                if (tag !== 'INPUT' && tag !== 'TEXTAREA') {
+                    e.preventDefault();
+                }
+            });
         }
 
         /* ============================================================
@@ -1773,6 +3421,10 @@
                 image_url: raw.image_url || null,
                 item_address: raw.item_address || null,
                 source: raw.source || 'getgems',
+                model: raw.model || null,
+                backdrop: raw.backdrop || null,
+                symbol: raw.symbol || null,
+                floor_basis: raw.floor_basis || null,
                 marketplace_url: raw.marketplace_url,
                 created_at: raw.created_at,
                 _ts: isNaN(ts) ? Date.now() : ts,
@@ -1782,41 +3434,60 @@
 
         async function tryBackendDemo() {
             try {
-                const feed = await api('/api/demo/feed?count=9');
-                if (!Array.isArray(feed) || feed.length === 0) return false;
+                const [floors, feed] = await Promise.all([
+                    api('/api/demo/floors'),
+                    api('/api/demo/feed?count=40').catch(() => []),
+                ]);
+                if (!Array.isArray(floors) || floors.length === 0) return false;
 
                 if (state.demoTimer) { clearInterval(state.demoTimer); state.demoTimer = null; }
-                state.feed = feed.map(normalizeBackendSignal).sort((a, b) => b._ts - a._ts);
-                state.knownFeedUrls = new Set(state.feed.map(s => s._key));
+
+                // Реальные флоры и каталог: тот же источник, что у снайпера.
+                state.floors = {};
+                floors.forEach(f => {
+                    state.floors[f.name] = {
+                        floor: f.floor,
+                        change24h: f.change_24h,
+                        liquidity: liquidityStyle(f.liquidity),
+                    };
+                });
+                applyCatalog(floors);
+
+                // Лента — только реальные сделки из базы (может быть пустой:
+                // пустая лента честнее выдуманных «выгодных» лотов).
+                applyFeedList(feed || [], false);
 
                 renderFeed();
                 renderFloors();
+                renderCalcChips();
+                renderAlertGiftChips();
+                renderQuickRanges();
                 updateSniperStats();
                 $('#feedUpdated').textContent = 'live · backend';
 
                 const badgeTitle = $('#demoBadgeTitle');
                 const badgeSub = $('#demoBadgeSub');
                 if (badgeTitle) badgeTitle.textContent = 'LIVE FEED · BACKEND';
-                if (badgeSub) badgeSub.textContent = 'Per-model рендеры NFT · источник: Getgems';
+                if (badgeSub) badgeSub.textContent = 'Только реальные сделки · источник: Getgems';
 
-                state.demoTimer = setInterval(async () => {                    try {
-                        const freshFeed = await api('/api/demo/feed?count=4');
-                        const fresh = [];
-                        (freshFeed || []).map(normalizeBackendSignal).forEach(sig => {
-                            if (state.knownFeedUrls.has(sig._key)) return;
-                            state.knownFeedUrls.add(sig._key);
-                            state.feed.unshift(sig);
-                            fresh.push(sig);
+                state.realPollFeed = setInterval(refreshFeed, 10000);
+
+                state.realPollFloors = setInterval(async () => {
+                    try {
+                        const latest = await api('/api/demo/floors');
+                        state.floors = {};
+                        latest.forEach(f => {
+                            state.floors[f.name] = {
+                                floor: f.floor,
+                                change24h: f.change_24h,
+                                liquidity: liquidityStyle(f.liquidity),
+                            };
                         });
-                        if (state.feed.length > FEED_CAP) state.feed.length = FEED_CAP;
-                        renderFeed(new Set(fresh.map(s => s._key)));
-                        updateSniperStats();
-                        $('#feedUpdated').textContent = 'live · backend';
-                        if (fresh.length > 0) {
-                            toast('Новый лот: ' + fresh[0].gift_name + ' −' + fresh[0].discount_pct + '%');
-                        }
-                    } catch (e) { /* временная сеть — продолжаем опрос */ }
-                }, DEMO_FEED_INTERVAL_MS);
+                        applyCatalog(latest);
+                        renderFloors();
+                        recalcFlip();
+                    } catch (e) { /* keep old floors */ }
+                }, 30000);
 
                 return true;
             } catch (err) {
@@ -1824,17 +3495,34 @@
             }
         }
 
+        async function updateTonUsdRate() {
+            try {
+                const ep = (isTelegramEnv && tg && tg.initData) ? '/api/gifts/rates' : '/api/demo/rates';
+                const res = await api(ep);
+                if (res && res.ton_usd && res.ton_usd > 0) {
+                    TON_USD_RATE = Number(res.ton_usd);
+                    const el = document.getElementById('tonUsdRate');
+                    if (el) el.textContent = '$' + TON_USD_RATE.toFixed(2);
+                }
+            } catch (e) {
+                // fallback remains
+            }
+        }
+
         async function boot() {
+            updateTonUsdRate();
             wireStaticEvents();
+            applyLanguage();
 
             if (!isTelegramEnv) {
-                // Мгновенный локальный стрим (offline-safe), затем апгрейд
-                // до реального бэкенда, если он доступен.
-                enterDemoMode(false);
+                // Сначала реальный бэкенд (реальные флоры и сделки); автономный
+                // Demo Mode — только если бэкенд недоступен.
                 const upgraded = await tryBackendDemo();
                 if (upgraded) {
                     toast('Поток лотов подключен к бэкенду терминала');
+                    return;
                 }
+                enterDemoMode(true);
                 return;
             }
 

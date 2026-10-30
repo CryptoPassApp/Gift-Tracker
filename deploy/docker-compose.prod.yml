@@ -1,0 +1,32 @@
+# Production overlay: Caddy с автоматическим TLS перед api.
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
+#
+# Требуется в .env:
+#   DOMAIN=gift.example.com
+#   MINI_APP_URL=https://gift.example.com/
+#   API_ALLOWED_ORIGINS=["https://gift.example.com"]
+
+services:
+  api:
+    # Наружу порт не публикуем — доступ только через Caddy.
+    ports: []
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

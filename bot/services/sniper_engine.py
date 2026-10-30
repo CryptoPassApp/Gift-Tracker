@@ -13,7 +13,7 @@ import logging
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -43,6 +43,10 @@ class Signal:
     source: str                  # маркетплейс-источник оффера: getgems|tonnel|mrkt
     is_hot: bool
     created_at: datetime
+    model: str | None = None     # атрибут Model конкретного NFT (Barcelona, ...)
+    backdrop: str | None = None  # атрибут Backdrop (Lemongrass, ...)
+    symbol: str | None = None    # атрибут Symbol (Cap, ...)
+    floor_basis: str | None = None  # "collection" | "model:<имя>"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -57,23 +61,37 @@ class Signal:
             "item_address": self.item_address,
             "source": self.source,
             "is_hot": self.is_hot,
+            "model": self.model,
+            "backdrop": self.backdrop,
+            "symbol": self.symbol,
+            "floor_basis": self.floor_basis,
             "created_at": self.created_at.isoformat() + "Z",
         }
 
 
-def evaluate_lot(lot: Lot, floor_price: float, settings: Settings) -> Signal | None:
-    """Применяет формулу арбитража к лоту.
+def build_signal(
+    lot: Lot, floor_price: float, settings: Settings, *, floor_basis: str | None = None
+) -> Signal | None:
+    """Строит сигнал из лота по эталонной цене ``floor_price``.
 
-    Возвращает ``Signal`` если дисконт >= SNIPER_THRESHOLD_PCT, иначе ``None``.
+    Эталон приходит из ``MarketAPI.reference_price``: флор модели лота, а
+    если он неизвестен — флор коллекции. Сигнал строится без порога, чтобы
+    вызывающий код сам решил, что делать (лента / пуш).
     """
     if floor_price <= 0 or lot.price <= 0:
         return None
 
+    # Дисконт может быть отрицательным (лот дороже эталона) — такие лоты
+    # в ленту не попадают, их отсекает scan_once до сохранения.
     discount = round(((floor_price - lot.price) / floor_price) * 100, 1)
-    if discount < settings.SNIPER_THRESHOLD_PCT:
-        return None
-
-    net_profit = round((floor_price * (1 - settings.GETGEMS_FEE)) - lot.price - settings.TON_GAS, 2)
+    # Эталон "mrkt_bid" — выход через ордер-автобай MRKT: комиссия их маркета.
+    if (floor_basis or "") == "mrkt_bid":
+        fee = getattr(settings, "MRKT_FEE", 0.05)
+    elif hasattr(settings, "fee_for_source"):
+        fee = settings.fee_for_source(lot.source)
+    else:
+        fee = getattr(settings, "GETGEMS_FEE", 0.05)
+    net_profit = round((floor_price * (1 - fee)) - lot.price - settings.TON_GAS, 2)
     is_hot = discount >= settings.HOT_THRESHOLD_PCT
 
     return Signal(
@@ -89,18 +107,62 @@ def evaluate_lot(lot: Lot, floor_price: float, settings: Settings) -> Signal | N
         source=lot.source,
         is_hot=is_hot,
         created_at=datetime.utcnow(),
+        model=lot.model,
+        backdrop=lot.backdrop,
+        symbol=lot.symbol,
+        floor_basis=floor_basis,
     )
 
 
-class SniperEngine:
-    """Периодический сканер рынка: листинги -> сигналы -> пуш-рассылка."""
+def is_feed_worthy(signal: Signal, min_profit_ton: float = 0.0) -> bool:
+    """Лот попадает в ленту только если он реально выгоден.
 
-    def __init__(self, market: MarketAPI, db: Database, notifier: Notifier, settings: Settings) -> None:
+    Лента снайпера — не список всех листингов маркета: в ней только лоты,
+    которые дешевле эталона и дают чистый профит выше порога. Порог нужен,
+    потому что лоты с +0.03 TON после комиссии маркетплейса — это ноль,
+    а не сделка: деньги съест комиссия и газ.
+    """
+    return (
+        signal.discount_pct > 0
+        and signal.net_profit_ton > 0
+        and signal.net_profit_ton >= float(min_profit_ton)
+    )
+
+
+def evaluate_lot(lot: Lot, floor_price: float, settings: Settings) -> Signal | None:
+    """Применяет формулу арбитража к лоту.
+
+    Возвращает ``Signal`` если дисконт >= SNIPER_THRESHOLD_PCT, иначе ``None``.
+    """
+    signal = build_signal(lot, floor_price, settings)
+    if signal is None or signal.discount_pct < settings.SNIPER_THRESHOLD_PCT:
+        return None
+    return signal
+
+
+class SniperEngine:
+    """Периодический сканер рынка: листинги -> сигналы -> пуш-рассылка.
+
+    Дедупликация двухуровневая: L1 — in-memory LRU (быстро, в пределах
+    процесса), L2 — таблица ``seen_lots`` в SQLite (переживает рестарт).
+    """
+
+    def __init__(
+        self,
+        market: MarketAPI,
+        db: Database,
+        notifier: Notifier,
+        settings: Settings,
+        *,
+        on_scan: Callable[[], None] | None = None,
+    ) -> None:
         self.market = market
         self.db = db
         self.notifier = notifier
         self.settings = settings
-        # Кэш дедупликации: один и тот же лот не пушится дважды.
+        # Колбэк для heartbeat: вызывается после каждого успешного прохода.
+        self.on_scan = on_scan
+        # L1-кэш дедупликации: один и тот же лот не ходит в БД повторно.
         self._seen: OrderedDict[str, None] = OrderedDict()
 
     # ------------------------------------------------------------------
@@ -120,38 +182,84 @@ class SniperEngine:
             await asyncio.sleep(self.settings.SCAN_INTERVAL_SEC)
 
     async def scan_once(self) -> list[Signal]:
-        """Один проход: получить листинги, оценить, сохранить, разослать."""
+        """Один проход: получить листинги, сохранить ВСЕ в ленту, разослать пуши."""
         floors = await self.market.get_floors()
         lots = await self.market.get_listings()
 
         signals: list[Signal] = []
+        persisted = 0
+        skipped_above_floor = 0
         for lot in lots:
-            if lot.marketplace_url in self._seen:
-                continue
-            self._remember_lot(lot.marketplace_url)
-
             floor_info = floors.get(lot.gift_name)
             if floor_info is None:
                 continue
 
-            signal = evaluate_lot(lot, float(floor_info["floor"]), self.settings)
+            # Эталон — флор ИМЕННО ЭТОЙ модели лота: у Plush Pepe общий флор
+            # коллекции 6470 TON, а модель Leonardo стоит 25500 TON.
+            reference, basis = await self._reference(lot, floors)
+            if reference <= 0:
+                continue
+
+            signal = build_signal(lot, reference, self.settings, floor_basis=basis)
             if signal is None:
                 continue
 
-            await self._persist_and_dispatch(signal)
-            signals.append(signal)
+            # В ленту попадают только лоты ниже эталона с профитом не меньше
+            # FEED_MIN_PROFIT_TON после комиссий. Наценка — не сделка.
+            if not is_feed_worthy(signal, self.settings.FEED_MIN_PROFIT_TON):
+                skipped_above_floor += 1
+                continue
 
-        if signals:
+            # Дедупликация — после оценки: лот, который сейчас дороже флора,
+            # позже может стать выгодным, и его нельзя «сжигать» отметкой.
+            if not await self._claim_lot(lot.marketplace_url):
+                continue
+
+            await self._persist_and_dispatch(signal)
+            persisted += 1
+            if signal.discount_pct >= self.settings.SNIPER_THRESHOLD_PCT:
+                signals.append(signal)
+
+        if persisted or skipped_above_floor:
             logger.info(
-                "Scan produced %d signal(s): %s",
+                "Scan: %d deal(s) persisted, %d listing(s) skipped above floor, "
+                "%d above %.0f%% push threshold: %s",
+                persisted,
+                skipped_above_floor,
                 len(signals),
-                ", ".join(f"{s.gift_name} -{s.discount_pct}%" for s in signals),
+                self.settings.SNIPER_THRESHOLD_PCT,
+                ", ".join(f"{s.gift_name}/{s.model or '?'} -{s.discount_pct}%" for s in signals[:5]),
             )
+        if self.on_scan is not None:
+            try:
+                self.on_scan()
+            except Exception:  # noqa: BLE001 — телеметрия не должна ломать скан
+                logger.exception("scan callback failed")
         return signals
 
     # ------------------------------------------------------------------
     # Внутренние шаги
     # ------------------------------------------------------------------
+    async def _reference(self, lot: Lot, floors: dict[str, dict[str, Any]]) -> tuple[float, str]:
+        """Эталонная цена лота: флор его модели, иначе флор коллекции."""
+        getter = getattr(self.market, "reference_price", None)
+        if getter is not None:
+            reference, basis = await getter(lot, floors)
+            if reference > 0:
+                return reference, basis
+        info = floors.get(lot.gift_name) or {}
+        return float(info.get("floor") or 0.0), "collection"
+
+    async def _claim_lot(self, url: str) -> bool:
+        """Проверяет дедупликацию в L1 и атомарно фиксирует лот в БД."""
+        if url in self._seen:
+            return False
+
+        claimed = await self.db.claim_seen_lot(url)
+        # Помещаем URL в L1 в любом случае: повторные сканы не будут
+        # дергать БД, даже если лот был отмечен еще до рестарта.
+        self._remember_lot(url)
+        return claimed
     def _remember_lot(self, url: str) -> None:
         self._seen[url] = None
         # Ограничиваем размер кэша дедупликации.
@@ -173,6 +281,10 @@ class SniperEngine:
                     image_url=signal.image_url,
                     item_address=signal.item_address,
                     source=signal.source,
+                    model=signal.model,
+                    backdrop=signal.backdrop,
+                    symbol=signal.symbol,
+                    floor_basis=signal.floor_basis,
                     created_at=signal.created_at,
                 )
             )
@@ -207,4 +319,4 @@ class SniperEngine:
         return list((await session.execute(stmt)).scalars())
 
 
-__all__ = ["Signal", "SniperEngine", "evaluate_lot"]
+__all__ = ["Signal", "SniperEngine", "build_signal", "evaluate_lot", "is_feed_worthy"]

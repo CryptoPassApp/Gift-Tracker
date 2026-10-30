@@ -18,18 +18,31 @@ from bot.services.market_api import GIFT_NAMES
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 
+async def _allowed_gift_names(request: Request) -> set[str]:
+    """Все подарки из реального каталога, иначе — легаси-пресеты для mock."""
+    market = getattr(request.app.state, "market", None)
+    if market is not None and hasattr(market, "get_catalog"):
+        if not market.get_catalog():
+            await market.get_floors()
+        catalog = market.get_catalog()
+        if catalog:
+            return set(catalog)
+    return set(GIFT_NAMES)
+
+
 class AlertCreate(BaseModel):
     """Тело запроса на создание алерта."""
 
     gift_name: str = Field(..., max_length=64, description="Например, 'Plush Pepe'")
-    max_price: float = Field(..., gt=0, le=10000, description="Триггер по максимальной цене, TON")
+    max_price: float = Field(..., gt=0, le=1000000, description="Триггер по максимальной цене, TON")
     min_discount: float = Field(default=15.0, ge=1, le=99, description="Минимальный дисконт, %")
 
     @field_validator("gift_name")
     @classmethod
-    def _gift_must_exist(cls, value: str) -> str:
-        if value not in GIFT_NAMES:
-            raise ValueError(f"Unknown gift: {value}. Allowed: {', '.join(GIFT_NAMES)}")
+    def _normalize_gift_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("gift_name must not be empty")
         return value
 
 
@@ -68,6 +81,11 @@ async def create_alert(
     settings = request.app.state.settings
     db = request.app.state.db
 
+    if payload.gift_name not in await _allowed_gift_names(request):
+        raise HTTPException(
+            status_code=422, detail=f"Unknown gift: {payload.gift_name}"
+        )
+
     async with db.session() as session:
         # Свежий объект пользователя в этой сессии (зависимость вернула detached-экземпляр).
         fresh_user = await session.get(User, user.id)
@@ -90,6 +108,52 @@ async def create_alert(
             is_active=True,
         )
         session.add(alert)
+        await session.flush()
+        return _alert_to_dict(alert)
+
+
+class AlertUpdate(BaseModel):
+    """Частичное обновление алерта: любое из полей."""
+
+    gift_name: str | None = Field(default=None, max_length=64)
+    max_price: float | None = Field(default=None, gt=0, le=1000000)
+    min_discount: float | None = Field(default=None, ge=1, le=99)
+
+    @field_validator("gift_name")
+    @classmethod
+    def _normalize_gift_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("gift_name must not be empty")
+        return value
+
+
+@router.patch("/{alert_id}", status_code=status.HTTP_200_OK)
+async def update_alert(
+    alert_id: int,
+    payload: AlertUpdate,
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Редактирует алерт пользователя (цена, дисконт, подарок)."""
+    if payload.gift_name is not None and payload.gift_name not in await _allowed_gift_names(request):
+        raise HTTPException(
+            status_code=422, detail=f"Unknown gift: {payload.gift_name}"
+        )
+
+    changes = payload.model_dump(exclude_unset=True, exclude_none=True)
+    if not changes:
+        raise HTTPException(status_code=422, detail="No fields to update")
+
+    db = request.app.state.db
+    async with db.session() as session:
+        alert = await session.get(Alert, alert_id)
+        if alert is None or alert.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        for field, value in changes.items():
+            setattr(alert, field, value)
         await session.flush()
         return _alert_to_dict(alert)
 

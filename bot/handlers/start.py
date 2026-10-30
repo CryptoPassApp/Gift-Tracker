@@ -1,4 +1,9 @@
-"""/start — приветствие, главное меню и кнопка запуска Mini App."""
+"""/start — приветствие, главное меню и кнопка запуска Mini App.
+
+Навигация: инлайн-кнопки редактируют текущее сообщение (ui.edit_screen),
+поэтому меню не плодит дубликаты в чате. Новые сообщения шлют только
+команды.
+"""
 from __future__ import annotations
 
 from aiogram import F, Router
@@ -8,7 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import get_settings
-from bot.keyboards import main_menu_kb
+from bot.handlers.ui import edit_screen
+from bot.keyboards import back_to_menu_kb, main_menu_kb
 from bot.models import User
 
 router = Router(name="start")
@@ -50,13 +56,39 @@ HOW_IT_WORKS_TEXT = (
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, session: AsyncSession, db_user: User) -> None:
-    """/start — приветствие + главное меню с кнопкой Mini App."""
+    """/start — приветствие + главное меню; ``?start=ref_<id>`` — реферал."""
     settings = get_settings()
+    await _apply_referral(message, session, db_user)
     await message.answer(
         WELCOME_TEXT,
-        reply_markup=main_menu_kb(settings.MINI_APP_URL),
+        reply_markup=main_menu_kb(
+            settings.MINI_APP_URL,
+            is_admin=db_user.telegram_id in settings.ADMIN_IDS,
+        ),
         disable_web_page_preview=True,
     )
+
+
+async def _apply_referral(message: Message, session: AsyncSession, db_user: User) -> None:
+    """Запоминает пригласившего из deep-link ``/start ref_<telegram_id>``."""
+    text = message.text or ""
+    parts = text.split(maxsplit=1)
+    payload = parts[1].strip() if len(parts) > 1 else ""
+    if not payload.startswith("ref_") or db_user.referred_by:
+        return
+    try:
+        referrer_tg = int(payload[4:])
+    except ValueError:
+        return
+    if referrer_tg == db_user.telegram_id:
+        return
+    referrer = (
+        await session.execute(select(User).where(User.telegram_id == referrer_tg))
+    ).scalar_one_or_none()
+    if referrer is None:
+        return
+    db_user.referred_by = referrer.id
+    await session.flush()
 
 
 @router.message(Command("help"))
@@ -65,24 +97,34 @@ async def cmd_help(message: Message) -> None:
     await message.answer(HOW_IT_WORKS_TEXT, disable_web_page_preview=True)
 
 
+MENU_TEXT = "⚡ <b>Главное меню</b>\nВыбирай раздел:"
+
+
 @router.callback_query(F.data == "menu:start")
-async def cb_menu_start(callback: CallbackQuery, session: AsyncSession, db_user: User) -> None:
-    """Возврат в главное меню по инлайн-кнопке."""
+async def cb_menu_start(callback: CallbackQuery, db_user: User) -> None:
+    """Возврат в главное меню — редактированием текущего сообщения."""
     settings = get_settings()
-    if callback.message is None:
-        await callback.answer()
-        return
-    await callback.message.answer(
-        "⚡ <b>Главное меню</b>\nВыбирай раздел:",
-        reply_markup=main_menu_kb(settings.MINI_APP_URL),
+    await edit_screen(
+        callback,
+        MENU_TEXT,
+        main_menu_kb(
+            settings.MINI_APP_URL,
+            is_admin=db_user.telegram_id in settings.ADMIN_IDS,
+        ),
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "noop")
+async def cb_noop(callback: CallbackQuery) -> None:
+    """Служебная кнопка-счётчик (например, «2/5» пагинации) без действия."""
     await callback.answer()
 
 
 @router.callback_query(F.data == "menu:how")
 async def cb_how_it_works(callback: CallbackQuery) -> None:
-    """Кнопка «Как это работает»."""
-    await callback.message.answer(HOW_IT_WORKS_TEXT, disable_web_page_preview=True)
+    """Кнопка «Как это работает» — экран с возвратом в меню."""
+    await edit_screen(callback, HOW_IT_WORKS_TEXT, back_to_menu_kb())
     await callback.answer()
 
 

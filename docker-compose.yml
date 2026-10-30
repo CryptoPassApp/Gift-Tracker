@@ -13,6 +13,11 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   # ---------- Telegram-бот (long polling + SniperEngine) ----------
   bot:
@@ -22,5 +27,19 @@ services:
     command: python -m bot.main
     volumes:
       - ./data:/app/data
+    # Дожидаемся notifier (FREE-пуши отложены до 45с) перед SIGKILL.
+    stop_grace_period: 60s
     depends_on:
       - api
+    healthcheck:
+      # Бот не слушает порт: жив ли он, проверяем по heartbeat-файлу.
+      test: ["CMD", "python", "-m", "bot.healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

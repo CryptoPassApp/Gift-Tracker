@@ -35,9 +35,16 @@ class FakeBot:
 
     def __init__(self):
         self.sent: list[tuple[int, str]] = []
+        self.photos: list[tuple[int, str]] = []
+        self.photo_error: Exception | None = None
 
     async def send_message(self, chat_id: int, text: str, **kwargs):
         self.sent.append((chat_id, text))
+
+    async def send_photo(self, chat_id: int, photo: str, caption: str = "", **kwargs):
+        if self.photo_error is not None:
+            raise self.photo_error
+        self.photos.append((chat_id, photo, caption))
 
     async def copy_message(self, chat_id: int, **kwargs):
         self.sent.append((chat_id, "<copy>"))
@@ -99,7 +106,7 @@ class TestAlertsQuota:
             user = await get_or_create_user(session, {"id": 21})
             user.is_pro = True
             for i in range(5):
-                session.add(Alert(user_id=user.id, gift_name="Spaceman", max_price=30.0 + i))
+                session.add(Alert(user_id=user.id, gift_name="Heroic Helmet", max_price=30.0 + i))
             await session.flush()
             assert await count_active_alerts(session, user) == 5
 
@@ -118,9 +125,10 @@ class TestNotifier:
         await notifier.push_signal(signal, [pro, free])
         await notifier.wait_pending()
 
-        chat_ids = {chat for chat, _ in fake.sent}
+        chat_ids = {chat for chat, _ in fake.sent} | {chat for chat, _, _ in fake.photos}
         assert chat_ids == {1001, 1002}
-        assert all("33.3" in text or "PROFIT" in text.upper() or "TON" in text for _, text in fake.sent)
+        payloads = [text for _, text in fake.sent] + [caption for _, _, caption in fake.photos]
+        assert all("33.3" in text or "PROFIT" in text.upper() or "TON" in text for text in payloads)
 
     async def test_free_delay_is_scheduled_not_immediate(self):
         settings = Settings(_env_file=None, FREE_PUSH_DELAY_SEC=3600)
@@ -142,6 +150,9 @@ class TestNotifier:
         class BlockingBot(FakeBot):
             async def send_message(self, chat_id, text, **kwargs):
                 raise TelegramForbiddenError(method="sendMessage", message="blocked")
+
+            async def send_photo(self, chat_id, photo, caption="", **kwargs):
+                raise TelegramForbiddenError(method="sendPhoto", message="blocked")
 
         notifier.bind(BlockingBot())  # type: ignore[arg-type]
         await notifier.push_signal(make_signal(), [User(telegram_id=3003)])

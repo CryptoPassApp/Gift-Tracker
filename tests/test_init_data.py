@@ -61,3 +61,45 @@ class TestValidateInitData:
     def test_sign_helper_matches_telegram_format(self):
         """Хелпер conftest и ручная сборка дают идентичную подпись."""
         assert sign_init_data(TEST_BOT_TOKEN, USER) == build_init_data(TEST_BOT_TOKEN, USER)
+
+    def test_insecure_default_token_raises_500(self):
+        raw = build_init_data("123456789:PLACEHOLDER-TOKEN-REPLACE-ME", USER)
+        with pytest.raises(HTTPException) as exc:
+            validate_init_data(raw, "123456789:PLACEHOLDER-TOKEN-REPLACE-ME")
+        assert exc.value.status_code == 500
+        assert "BOT_TOKEN" in exc.value.detail
+
+    def test_expired_init_data_rejected_with_401(self):
+        raw = build_init_data(TEST_BOT_TOKEN, USER)
+        with pytest.raises(HTTPException) as exc:
+            validate_init_data(raw, TEST_BOT_TOKEN, max_age_sec=3600)
+        assert exc.value.status_code == 401
+
+    def test_fresh_init_data_passes_with_max_age(self):
+        import time
+        params = {
+            "user": json.dumps(USER, separators=(",", ":")),
+            "auth_date": str(int(time.time())),
+            "query_id": "AAF_fresh",
+        }
+        dcs = "\n".join(f"{k}={params[k]}" for k in sorted(params))
+        secret = hmac.new(b"WebAppData", TEST_BOT_TOKEN.encode(), hashlib.sha256).digest()
+        params["hash"] = hmac.new(secret, dcs.encode(), hashlib.sha256).hexdigest()
+        raw = urllib.parse.urlencode(params)
+        payload = validate_init_data(raw, TEST_BOT_TOKEN, max_age_sec=86400)
+        assert payload["id"] == 4242
+
+    def test_future_timestamp_rejected(self):
+        import time
+        params = {
+            "user": json.dumps(USER, separators=(",", ":")),
+            "auth_date": str(int(time.time()) + 10000),
+            "query_id": "AAF_future",
+        }
+        dcs = "\n".join(f"{k}={params[k]}" for k in sorted(params))
+        secret = hmac.new(b"WebAppData", TEST_BOT_TOKEN.encode(), hashlib.sha256).digest()
+        params["hash"] = hmac.new(secret, dcs.encode(), hashlib.sha256).hexdigest()
+        raw = urllib.parse.urlencode(params)
+        with pytest.raises(HTTPException) as exc:
+            validate_init_data(raw, TEST_BOT_TOKEN, max_age_sec=86400)
+        assert exc.value.status_code == 401

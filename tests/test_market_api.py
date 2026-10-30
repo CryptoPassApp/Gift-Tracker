@@ -18,11 +18,22 @@ class TestPresets:
         assert len(GIFT_PRESETS) == 8
         assert GIFT_NAMES[0] == "Plush Pepe"
 
+    def test_gift_names_are_real_telegram_gifts(self):
+        """Имена подарков — канонические, без выдуманных алиасов."""
+        assert set(GIFT_NAMES) == {
+            "Plush Pepe", "Genie Lamp", "Ion Gem", "Trapped Heart",
+            "Astral Shard", "Heroic Helmet", "Mousse Cake", "Perfume Bottle",
+        }
+
     def test_every_preset_has_real_media(self):
         for name, preset in GIFT_PRESETS.items():
             assert preset["image"].startswith("https://nft.fragment.com/"), name
             assert preset["base_floor"] > 0, name
-            assert preset["collection"], name
+            # Флоры по моделям берутся из датасета, а не из выдуманной
+            # "коллекции" вида "Rare Meme".
+            assert preset["models_path"].startswith("models/"), name
+            assert preset["models_path"].endswith("/prices.json"), name
+            assert "collection" not in preset, name
 
     def test_addresses_are_raw_ton(self):
         for name, preset in GIFT_PRESETS.items():
@@ -58,11 +69,11 @@ class TestPerModelMedia:
 class TestDeeplinks:
     def test_collection_url_with_address(self):
         url = getgems_collection_url("Plush Pepe")
-        assert url.startswith("https://getgems.io/collection/0:")
+        assert url.startswith("https://getgems.io/collection/EQ")
 
     def test_collection_url_falls_back_to_search(self):
-        url = getgems_collection_url("Magic Hat")
-        assert url == "https://getgems.io/search?text=Magic%20Hat"
+        url = getgems_collection_url("Genie Lamp")
+        assert url == "https://getgems.io/search?text=Genie%20Lamp"
 
     def test_item_url(self):
         assert getgems_item_url("0:abc") == "https://getgems.io/nft/0:abc"
@@ -108,7 +119,7 @@ class TestListings:
         for _ in range(30):  # генератор вероятностный — собираем выборку
             for lot in await market.get_listings():
                 seen += 1
-                assert lot.marketplace_url.startswith("https://getgems.io/collection/0:") or \
+                assert lot.marketplace_url.startswith("https://getgems.io/collection/EQ") or \
                        lot.marketplace_url.startswith("https://getgems.io/search?text=")
                 assert lot.image_url.startswith("https://nft.fragment.com/")
                 assert lot.price > 0

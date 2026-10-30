@@ -1,0 +1,18 @@
+# Конфиг ngrok для GiftTracker: стабильный бесплатный домен + обход
+# interstitial-заглушки (заголовок ngrok-skip-browser-warning агент
+# добавляет к каждому входящему запросу). authtoken берётся из глобального
+# конфига %LOCALAPPDATA%\ngrok\ngrok.yml. Запуск:
+#   ngrok start gifttracker --config "%LOCALAPPDATA%\ngrok\ngrok.yml" --config "%~dp0ngrok_policy.yml"
+version: 3
+tunnels:
+  gifttracker:
+    proto: http
+    addr: 8020
+    url: formulaically-nontribal-lizette.ngrok-free.dev
+    traffic_policy:
+      inbound:
+        - actions:
+            - type: add-headers
+              config:
+                headers:
+                  ngrok-skip-browser-warning: "1"

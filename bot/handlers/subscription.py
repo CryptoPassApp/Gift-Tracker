@@ -1,10 +1,18 @@
-"""Subscription — продажа PRO за Telegram Stars (валюта XTR).
+"""Subscription — продажа PRO за Telegram Stars и крипту (Crypto Pay).
 
-Поток оплаты:
+Stars-поток:
   1. /pro или кнопка меню -> клавиатура тарифов;
   2. callback pro:month / pro:lifetime -> send_invoice (currency="XTR");
   3. pre_checkout_query -> валидация суммы и payload, answer(ok=True);
   4. successful_payment -> запись Payment, активация PRO.
+
+Крипто-поток (кнопки видны только при заданном CRYPTO_PAY_TOKEN):
+  1. callback pro:crypto:<plan> -> CryptoPayService.create_for_user()
+     -> сообщение со ссылкой на инвойс в @CryptoBot;
+  2. юзер платит; фон-джоба сервиса сверяет оплаты раз в
+     CRYPTO_POLL_INTERVAL_SEC секунд;
+  3. кнопка «Я уже оплатил» (pro:crypto:check:<invoice_id>) проверяет
+     инвойс точечно и активирует PRO без ожидания джобы.
 """
 from __future__ import annotations
 
@@ -18,8 +26,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import Settings, get_settings
 from bot.database import activate_pro
-from bot.keyboards import main_menu_kb, pro_plans_kb
+from bot.handlers.ui import edit_screen
+from bot.keyboards import crypto_invoice_kb, main_menu_kb, pro_plans_kb
 from bot.models import Payment, User
+from bot.services.crypto_payments import CryptoPayError, CryptoPaymentService
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +48,8 @@ PRO_TEXT = (
     "⭐ <b>150 Stars</b> — месяц (~$3)\n"
     "👑 <b>999 Stars</b> — навсегда (~$20, экономия 44%)\n"
     "\n"
-    "Оплата внутри Telegram — без карт и ввода данных."
+    "Оплата внутри Telegram — без карт и ввода данных.\n"
+    "💰 Можно и криптой (USDT/TON) — разовый платеж через @CryptoBot."
 )
 
 
@@ -50,26 +61,34 @@ def _plan_payloads(settings: Settings) -> dict[str, int]:
     }
 
 
+def _crypto_prices(settings: Settings) -> dict[str, float] | None:
+    """Цены крипто-тарифов для клавиатуры (None = фича выключена)."""
+    if not settings.CRYPTO_PAY_TOKEN:
+        return None
+    return {
+        "pro_month": settings.CRYPTO_MONTH_USD,
+        "pro_lifetime": settings.CRYPTO_LIFETIME_USD,
+    }
+
+
 @router.message(Command("pro"))
 async def cmd_pro(message: Message, db_user: User) -> None:
     """/pro — показать тарифы."""
+    prices = _crypto_prices(get_settings())
     if db_user.is_pro_active():
         await message.answer(
             "👑 Ты уже <b>PRO-снайпер</b> — пуши летят мгновенно!\n"
             "Можно продлить или перейти на Lifetime 👇",
-            reply_markup=pro_plans_kb(),
+            reply_markup=pro_plans_kb(prices),
         )
         return
-    await message.answer(PRO_TEXT, reply_markup=pro_plans_kb())
+    await message.answer(PRO_TEXT, reply_markup=pro_plans_kb(prices))
 
 
 @router.callback_query(F.data == "menu:pro")
 async def cb_menu_pro(callback: CallbackQuery, db_user: User) -> None:
-    """Кнопка «Купить PRO» из главного меню."""
-    if callback.message is None:
-        await callback.answer()
-        return
-    await callback.message.answer(PRO_TEXT, reply_markup=pro_plans_kb())
+    """Кнопка «Купить PRO» — переключает экран тарифов редактированием."""
+    await edit_screen(callback, PRO_TEXT, pro_plans_kb(_crypto_prices(get_settings())))
     await callback.answer()
 
 
@@ -93,6 +112,74 @@ async def cb_buy_pro(callback: CallbackQuery, db_user: User) -> None:
         prices=[LabeledPrice(label=str(plan_info["title"]), amount=int(plan_info["stars"]))],
     )
     await callback.answer("Счет создан ⭐")
+
+
+@router.callback_query(F.data.in_({"pro:crypto:month", "pro:crypto:lifetime"}))
+async def cb_buy_crypto(
+    callback: CallbackQuery, db_user: User, crypto: CryptoPaymentService | None = None
+) -> None:
+    """Создает крипто-инвойс Crypto Pay и присылает ссылку на оплату."""
+    if callback.data is None:
+        await callback.answer()
+        return
+    plan = f"pro_{callback.data.rsplit(':', maxsplit=1)[1]}"
+    service = crypto
+
+    if service is None or not service.enabled:
+        await callback.answer("Крипто-оплата временно недоступна", show_alert=True)
+        return
+    if callback.message is None:
+        await callback.answer()
+        return
+
+    try:
+        invoice_id, url = await service.create_for_user(db_user, plan)
+        amount = service.price_for(plan)
+        asset = service.settings.CRYPTO_ASSET
+    except CryptoPayError as exc:
+        logger.warning("Crypto invoice create failed for %s: %s", db_user.telegram_id, exc)
+        await callback.answer("Не удалось создать счет. Попробуй позже.", show_alert=True)
+        return
+
+    plan_title = "PRO месяц" if plan == "pro_month" else "PRO навсегда"
+    await callback.message.answer(
+        "💳 <b>Счет на оплату криптой</b>\n"
+        f"Тариф: <b>{plan_title}</b> — <b>${amount:g}</b> ({asset})\n"
+        "\n"
+        "Оплата в @CryptoBot — USDT, TON и другие валюты, разовый платеж.\n"
+        "После оплаты нажми «Я уже оплатил» — PRO включится автоматически.",
+        reply_markup=crypto_invoice_kb(url, invoice_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("pro:crypto:check:"))
+async def cb_crypto_check(
+    callback: CallbackQuery, crypto: CryptoPaymentService | None = None
+) -> None:
+    """«Я уже оплатил»: точечная проверка инвойса и активация PRO."""
+    raw = (callback.data or "").rsplit(":", maxsplit=1)[1]
+    if not raw.isdigit() or crypto is None:
+        await callback.answer("Счет не найден", show_alert=True)
+        return
+    invoice_id = int(raw)
+
+    payment = await crypto.db.get_crypto_invoice(invoice_id)
+    already_paid = payment is not None and payment.status == "paid"
+    activated = False
+    if not already_paid:
+        try:
+            activated = await crypto.check_invoice_now(invoice_id)
+        except CryptoPayError as exc:
+            logger.warning("Crypto check failed for #%d: %s", invoice_id, exc)
+
+    if already_paid or activated:
+        await callback.answer("👑 Оплата зачислена — PRO активен!", show_alert=True)
+    else:
+        await callback.answer(
+            "Пока не вижу оплаты. Платеж может идти пару минут — нажми кнопку еще раз.",
+            show_alert=True,
+        )
 
 
 @router.pre_checkout_query()

@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY bot ./bot
 COPY api ./api
 COPY static ./static
+COPY scripts ./scripts
 
 # Каталог SQLite (примонтирован как volume в docker-compose).
 RUN mkdir -p /app/data
