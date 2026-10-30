@@ -123,6 +123,13 @@ class Settings(BaseSettings):
     PRO_MONTH_DAYS: int = 30
     # Период фонового снятия истекших PRO-подписок (секунды).
     PRO_EXPIRY_CHECK_INTERVAL_SEC: int = Field(default=3600, gt=0)
+    # Рефералка: сколько процентов от подписки приглашенного уходит
+    # пригласившему днями PRO (30 дней * 15% = 5 дней за месяц друга).
+    REFERRAL_REWARD_PCT: int = Field(default=15, ge=1, le=100)
+    # Куда ведет кнопка «Тех-поддержка» (саппорт-бот/акк; меняется в .env).
+    SUPPORT_URL: str = "https://t.me/GiftTracker_App"
+    # Лента сделок: сколько часов хранить snipe_signals (чистка в maintenance).
+    SNIPE_SIGNALS_RETENTION_HOURS: int = Field(default=24, ge=1)
 
     # ---------- Монетизация (крипта через Crypto Pay @CryptoBot) ----------
     # Токен приложения Crypto Pay: @CryptoBot -> Crypto Pay -> Create App.

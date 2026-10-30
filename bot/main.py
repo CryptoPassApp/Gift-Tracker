@@ -25,7 +25,7 @@ from aiogram.types import BotCommand
 
 from bot.config import get_settings
 from bot.database import Database
-from bot.handlers import admin, alerts, start, subscription
+from bot.handlers import admin, alerts, referral, start, subscription
 from bot.logging_setup import configure_logging
 from bot.middleware import AuthMiddleware
 from bot.services.crypto_payments import CryptoPaymentService
@@ -46,7 +46,8 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher) -> None:
         [
             BotCommand(command="start", description="⚡ Открыть терминал"),
             BotCommand(command="alerts", description="🔔 Мои алерты"),
-            BotCommand(command="pro", description="👑 Купить PRO за Stars"),
+            BotCommand(command="pro", description="👑 Купить PRO (Stars / крипта)"),
+            BotCommand(command="ref", description="🤝 Рефералка — дни PRO за друзей"),
             BotCommand(command="settings", description="🎚 PRO-фильтр дисконта"),
             BotCommand(command="top", description="🏆 Топ-5 снайпов радара"),
         ]
@@ -182,6 +183,7 @@ async def main() -> None:
     dispatcher.include_routers(
         start.router,
         subscription.router,
+        referral.router,
         alerts.router,
         admin.router,
     )

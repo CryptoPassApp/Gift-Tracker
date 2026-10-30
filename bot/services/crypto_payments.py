@@ -23,7 +23,7 @@ from typing import Any
 import httpx
 
 from bot.config import Settings
-from bot.database import Database, activate_pro
+from bot.database import Database, activate_pro, award_referral
 from bot.models import User
 
 logger = logging.getLogger(__name__)
@@ -205,8 +205,16 @@ class CryptoPaymentService:
                 if payment.plan == "pro_lifetime"
                 else f"{self.settings.PRO_MONTH_DAYS} дней"
             )
+            # Рефералка: награда пригласившему за крипто-оплату.
+            reward = await award_referral(
+                session, user, f"crypto:{payment.invoice_id}", "crypto"
+            )
+            referrer_tg = reward[0].telegram_id if reward is not None else None
+            reward_days = reward[1] if reward is not None else 0.0
 
         await self._notify_paid(telegram_id, payment.amount, payment.asset, expires_text)
+        if referrer_tg is not None:
+            await self._notify_referrer(referrer_tg, reward_days)
         logger.info(
             "PRO activated via crypto: user=%s plan=%s invoice=#%d",
             telegram_id,
@@ -230,6 +238,18 @@ class CryptoPaymentService:
             await self.bot.send_message(telegram_id, text)
         except Exception:  # noqa: BLE001 — уведомление не должно ломать активацию
             logger.warning("Crypto payment notify failed for %s", telegram_id, exc_info=True)
+
+    async def _notify_referrer(self, telegram_id: int, days: float) -> None:
+        """Сообщает пригласившему о начислении за крипто-оплату друга."""
+        if self.bot is None:
+            return
+        try:
+            await self.bot.send_message(
+                telegram_id,
+                f"🤝 Твой приглашенный оплатил PRO — <b>+{days:g} дней</b> начислено автоматически!",
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("Referral notify failed for %s", telegram_id, exc_info=True)
 
     async def check_invoice_now(self, invoice_id: int) -> bool:
         """Точечная проверка по кнопке «Я уже оплатил»."""

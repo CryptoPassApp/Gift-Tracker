@@ -277,3 +277,55 @@ class TestBackup:
         removed = prune_backups(out_dir, keep=1)
         assert len(removed) == 3
         assert len(list(out_dir.glob("gift_tracker-*.db"))) == 1
+
+
+async def test_prune_snipe_signals_keeps_fresh(db, settings):
+    """Лента не растет бесконечно: сделки старше retention удаляются, свежие живут."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import func, select
+
+    from bot.models import SnipeSignal
+
+    old_time = datetime.utcnow() - timedelta(hours=settings.SNIPE_SIGNALS_RETENTION_HOURS + 2)
+    rows = []
+    for i in range(3):
+        rows.append(
+            SnipeSignal(
+                gift_name="Ion Gem",
+                lot_number=str(100 + i),
+                floor_price=72.0,
+                deal_price=60.0,
+                discount_pct=16.0,
+                net_profit_ton=1.5,
+                marketplace_url=f"https://getgems.io/nft/old-{i}",
+                created_at=old_time,
+            )
+        )
+    rows.append(
+        SnipeSignal(
+            gift_name="Ion Gem",
+            lot_number="200",
+            floor_price=72.0,
+            deal_price=55.0,
+            discount_pct=23.0,
+            net_profit_ton=3.0,
+            marketplace_url="https://getgems.io/nft/fresh-1",
+        )
+    )
+    async with db.session() as session:
+        session.add_all(rows)
+
+    deleted = await db.prune_snipe_signals(settings.SNIPE_SIGNALS_RETENTION_HOURS)
+    assert deleted == 3
+
+    async with db.session() as session:
+        left = (
+            await session.execute(select(func.count(SnipeSignal.id)))
+        ).scalar_one()
+        assert left == 1
+        survivors = list((await session.execute(select(SnipeSignal))).scalars())
+        assert survivors[0].marketplace_url == "https://getgems.io/nft/fresh-1"
+
+    # Повторный проход ничего не удаляет (идемпотентно).
+    assert await db.prune_snipe_signals(settings.SNIPE_SIGNALS_RETENTION_HOURS) == 0

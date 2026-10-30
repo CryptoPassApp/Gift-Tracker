@@ -25,7 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import Settings, get_settings
-from bot.database import activate_pro
+from bot.database import activate_pro, award_referral
 from bot.handlers.ui import edit_screen
 from bot.keyboards import crypto_invoice_kb, main_menu_kb, pro_plans_kb
 from bot.models import Payment, User
@@ -231,6 +231,11 @@ async def on_successful_payment(
 
     await activate_pro(session, db_user, plan, month_days=settings.PRO_MONTH_DAYS)
 
+    # Рефералка: пригласивший получает дни PRO за оплату приглашенного.
+    reward = await award_referral(
+        session, db_user, f"stars:{payment.telegram_payment_charge_id}", "stars"
+    )
+
     expires = "навсегда 👑" if plan == "pro_lifetime" else db_user.pro_expires_at.strftime("%d.%m.%Y")
     await message.answer(
         "👑 <b>PRO активирован!</b>\n"
@@ -248,6 +253,16 @@ async def on_successful_payment(
         payment.total_amount,
         payment.telegram_payment_charge_id,
     )
+
+    if reward is not None:
+        referrer, days = reward
+        try:
+            await message.bot.send_message(
+                referrer.telegram_id,
+                f"🤝 Твой приглашенный оплатил PRO — <b>+{days:g} дней</b> начислено автоматически!",
+            )
+        except Exception:  # noqa: BLE001 — уведомление не ломает активацию
+            logger.warning("Referral notify failed for %s", referrer.telegram_id, exc_info=True)
 
 
 __all__ = ["router", "PRO_TEXT"]

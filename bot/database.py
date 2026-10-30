@@ -16,7 +16,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from bot.config import Settings, get_settings
-from bot.models import Alert, Base, CryptoPayment, FloorSnapshot, Payment, SeenLot, SnipeSignal, User
+from bot.models import Alert, Base, CryptoPayment, FloorSnapshot, Payment, ReferralReward, SeenLot, SnipeSignal, User
 
 logger = logging.getLogger(__name__)
 
@@ -325,6 +325,25 @@ class Database:
             )
             return int(result.rowcount or 0)
 
+    async def prune_snipe_signals(self, retention_hours: int = 24) -> int:
+        """Чистит ленту сделок (snipe_signals) старше срока хранения.
+
+        Лента — «живая» витрина: сделки старше суток не имеют ценности,
+        а таблица растет при каждом скане (иначе бесконечный рост).
+        Дедупликация пушей живет в отдельной ``seen_lots`` и не страдает.
+        """
+        if retention_hours <= 0:
+            return 0
+        cutoff = datetime.utcnow() - timedelta(hours=retention_hours)
+        async with self.session() as session:
+            result = await session.execute(
+                delete(SnipeSignal).where(SnipeSignal.created_at < cutoff)
+            )
+            deleted = int(result.rowcount or 0)
+        if deleted:
+            logger.info("Pruned %d snipe_signal(s) older than %dh", deleted, retention_hours)
+        return deleted
+
     # ------------------------------------------------------------------
     # Жизненный цикл PRO
     # ------------------------------------------------------------------
@@ -508,6 +527,82 @@ async def count_active_alerts(session: AsyncSession, user: User) -> int:
         select(func.count(Alert.id)).where(Alert.user_id == user.id, Alert.is_active.is_(True))
     )
     return int(result.scalar_one())
+
+
+async def award_referral(
+    session: AsyncSession,
+    referred_user: User,
+    payment_ref: str,
+    source: str,
+    settings: Settings | None = None,
+) -> tuple[User, float] | None:
+    """Начисляет пригласившему награду за оплату PRO приглашенным.
+
+    Возвращает ``(referrer, days)`` или ``None``, если начислять не за что:
+    юзер без пригласившего, самореферал или этот платеж уже засчитан.
+
+    Защита (в связке с start.py): ``referred_by`` ставится один раз и только
+    по реальному deep-link, самореферал отклонен, ``payment_ref`` уникален —
+    повторная доставка того же платежа не дает второй бонус.
+    """
+    if not referred_user.referred_by:
+        return None
+    referrer = await session.get(User, referred_user.referred_by)
+    if referrer is None or referrer.id == referred_user.id:
+        return None
+
+    existing = (
+        await session.execute(
+            select(ReferralReward).where(ReferralReward.payment_ref == payment_ref)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return None
+
+    from sqlalchemy import func
+    from math import ceil
+
+    settings = settings or get_settings()
+    days = float(ceil(settings.PRO_MONTH_DAYS * settings.REFERRAL_REWARD_PCT / 100))
+    session.add(
+        ReferralReward(
+            referrer_user_id=referrer.id,
+            referred_user_id=referred_user.id,
+            payment_ref=payment_ref,
+            days_awarded=days,
+            source=source,
+        )
+    )
+    # Дни поверх текущей подписки (Lifetime-юзер останется Lifetime —
+    # его подписка и так вечная, дублировать нечего).
+    await activate_pro(session, referrer, "pro_month", month_days=days)
+    logger.info(
+        "Referral reward: referrer=%s +%gd PRO (from user %s, %s)",
+        referrer.telegram_id,
+        days,
+        referred_user.telegram_id,
+        payment_ref,
+    )
+    return referrer, days
+
+
+async def referral_stats(session: AsyncSession, user: User) -> tuple[int, float]:
+    """Сколько юзеров пригласил пользователь и суммарно заработанных дней."""
+    from sqlalchemy import func
+
+    invited = (
+        await session.execute(
+            select(func.count(User.id)).where(User.referred_by == user.id)
+        )
+    ).scalar_one()
+    earned = (
+        await session.execute(
+            select(func.coalesce(func.sum(ReferralReward.days_awarded), 0.0)).where(
+                ReferralReward.referrer_user_id == user.id
+            )
+        )
+    ).scalar_one()
+    return int(invited), float(earned)
 
 
 __all__ = [

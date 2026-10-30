@@ -32,6 +32,7 @@ class MaintenanceService:
         snapshots = await self.db.prune_floor_snapshots(
             self.settings.FLOOR_SNAPSHOT_RETENTION_DAYS
         )
+        await self.db.prune_snipe_signals(self.settings.SNIPE_SIGNALS_RETENTION_HOURS)
 
         if checkpoint is not None:
             if checkpoint.get("busy"):

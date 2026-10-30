@@ -187,3 +187,26 @@ class CryptoPayment(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<CryptoPayment #{self.invoice_id} {self.plan} {self.amount} {self.asset} {self.status}>"
+
+
+class ReferralReward(Base):
+    """Награда пригласившему за оплату PRO приглашенным пользователем.
+
+    Защита от абьюза: ``payment_ref`` уникален («stars:<charge_id>» /
+    «crypto:<invoice_id>»), поэтому один и тот же платеж не может
+    начислить бонус дважды; самореферал и повторное переприсвоение
+    ``referred_by`` отсечены на уровне логики (start.py / database.py).
+    """
+
+    __tablename__ = "referral_rewards"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    referrer_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    referred_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    payment_ref: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    days_awarded: Mapped[float] = mapped_column(Float, nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)  # stars | crypto
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<ReferralReward ref={self.referrer_user_id} +{self.days_awarded}d {self.payment_ref}>"

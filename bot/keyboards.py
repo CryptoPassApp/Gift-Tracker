@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+from urllib.parse import quote
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -32,6 +33,10 @@ def main_menu_kb(mini_app_url: str | None, is_admin: bool = False) -> InlineKeyb
         InlineKeyboardButton(text="👑 Купить PRO", callback_data="menu:pro"),
     )
     builder.row(
+        InlineKeyboardButton(text="🤝 Реферальная система", callback_data="menu:ref"),
+    )
+    builder.row(
+        InlineKeyboardButton(text="🛠 Тех-поддержка", callback_data="menu:support"),
         InlineKeyboardButton(text="❓ Как это работает", callback_data="menu:how"),
     )
     if is_admin:
@@ -70,6 +75,26 @@ def crypto_invoice_kb(invoice_url: str, invoice_id: int) -> InlineKeyboardMarkup
         InlineKeyboardButton(text="🔄 Я уже оплатил — обновить", callback_data=f"pro:crypto:check:{invoice_id}")
     )
     builder.row(InlineKeyboardButton(text="« К тарифам", callback_data="menu:pro"))
+    return builder.as_markup()
+
+
+def referral_kb(referral_url: str, mini_app_url: str | None = None) -> InlineKeyboardMarkup:
+    """Экран «Рефералка»: шаринг ссылки через t.me/share + назад в меню."""
+    builder = InlineKeyboardBuilder()
+    if referral_url:
+        share = (
+            "https://t.me/share/url?url=" + quote(referral_url, safe="")
+            + "&text=" + quote(
+                "Лови снайпер-терминал подарков Telegram — сделки ниже флора с расчетом чистого профита:",
+                safe="",
+            )
+        )
+        builder.row(InlineKeyboardButton(text="📤 Поделиться ссылкой", url=share))
+    if mini_app_url and str(mini_app_url).startswith("https://"):
+        builder.row(
+            InlineKeyboardButton(text="⚡ Открыть терминал", web_app=WebAppInfo(url=mini_app_url))
+        )
+    builder.row(InlineKeyboardButton(text="« В меню", callback_data="menu:start"))
     return builder.as_markup()
 
 
@@ -132,6 +157,15 @@ def back_to_menu_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def support_kb(support_url: str | None) -> InlineKeyboardMarkup:
+    """Экран «Тех-поддержка»: ссылка на саппорт-бота/акк + назад в меню."""
+    builder = InlineKeyboardBuilder()
+    if support_url and str(support_url).startswith("https://t.me/"):
+        builder.row(InlineKeyboardButton(text="💬 Написать в поддержку", url=support_url))
+    builder.row(InlineKeyboardButton(text="« В меню", callback_data="menu:start"))
+    return builder.as_markup()
+
+
 DISCOUNT_THRESHOLD_OPTIONS = (0, 15, 20, 25, 30, 40)
 
 
@@ -163,6 +197,7 @@ __all__ = [
     "main_menu_kb",
     "pro_plans_kb",
     "crypto_invoice_kb",
+    "referral_kb",
     "alerts_screen_kb",
     "admin_panel_kb",
     "back_to_menu_kb",

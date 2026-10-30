@@ -14,27 +14,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import get_settings
 from bot.handlers.ui import edit_screen
-from bot.keyboards import back_to_menu_kb, main_menu_kb
+from bot.keyboards import back_to_menu_kb, main_menu_kb, support_kb
 from bot.models import User
 
 router = Router(name="start")
 
 WELCOME_TEXT = (
-    "⚡ <b>GIFTTRACKER — Sniper Terminal</b>\n"
-    "Ловим подарки Telegram ниже флора, пока другие спят.\n"
+    "⚡ <b>GIFTTRACKER — терминал подарков Telegram</b>\n"
+    "Ловим сделки ниже флора по всем площадкам.\n"
     "\n"
-    "🔥 <b>Что умеет терминал:</b>\n"
-    "• <b>Live-лента снайпера</b> — лоты с дисконтом ≥15% от флора в реальном времени\n"
-    "• <b>Hot Liquidation</b> — мгновенный пуш при −30% и ниже\n"
-    "• <b>Floor Matrix</b> — флоры 8 коллекций в TON/USD и статус ликвидности\n"
-    "• <b>Flip-калькулятор</b> — чистая прибыль с учетом комиссии 5% и газа\n"
-    "• <b>Персональные алерты</b> — триггеры по цене и дисконту\n"
+    "🔎 <b>Что внутри:</b>\n"
+    "• <b>Лента сделок</b> — лоты Getgems и Portals дешевле флора модели, "
+    "с чистым профитом после комиссий маркетов\n"
+    "• <b>Флоры 122 коллекций</b> — по каждой модели, с изменением за 24ч\n"
+    "• <b>Flip-калькулятор</b> — профит конкретной сделки с учетом комиссии и газа\n"
+    "• <b>Алерты</b> — триггер по цене/дисконту на любой подарок\n"
     "\n"
-    "💰 <b>Математика снайпа:</b>\n"
-    "<code>Profit = Floor × 0.95 − Deal − 0.08 TON</code>\n"
-    "\n"
-    "👑 <b>PRO-снайперы</b> получают пуши <b>мгновенно</b> (0 сек вместо 45) "
-    "и безлимитные алерты.\n"
+    "👑 <b>PRO</b> — мгновенные пуши (0 сек вместо 45) и безлимит алертов.\n"
+    "Оплата: Telegram Stars или крипта (@CryptoBot).\n"
+    "🤝 <b>Реферальная система</b> — дни PRO за приглашенных друзей (/ref).\n"
     "\n"
     "Жми кнопку ниже — терминал откроется прямо в Telegram 👇"
 )
@@ -42,15 +40,18 @@ WELCOME_TEXT = (
 HOW_IT_WORKS_TEXT = (
     "❓ <b>Как это работает</b>\n"
     "\n"
-    "1️⃣ Радар каждые 5 секунд сканирует лоты подарков Telegram.\n"
-    "2️⃣ Движок считает дисконт и чистую прибыль по формуле "
-    "<code>(Floor × 0.95) − Deal − 0.08</code>.\n"
-    "3️⃣ Лоты с дисконтом ≥15% попадают в ленту; ≥30% — пушатся как "
-    "<b>Hot Liquidation</b>.\n"
-    "4️⃣ PRO получает сигнал <b>в ту же секунду</b>, FREE — через 45 секунд.\n"
+    "1️⃣ Радар каждые 5 секунд обходит лоты на Getgems и Portals "
+    "(122 коллекции подарков).\n"
+    "2️⃣ Каждый лот сравнивается с флором его модели — база честная, "
+    "не «средняя по коллекции».\n"
+    "3️⃣ Считается чистый профит: <code>Floor × 0.95 − Deal − Gas</code> "
+    "(комиссия площадки и газ уже внутри).\n"
+    "4️⃣ Лоты дешевле флора попадают в ленту терминала; от −30% и ниже — "
+    "мгновенный пуш с фото лота.\n"
+    "5️⃣ PRO получает сигнал <b>в ту же секунду</b>, FREE — через 45 секунд.\n"
     "\n"
-    "Именно эти 45 секунд решают, кто заберет лот −34%, а кто увидит "
-    "«уже продано» 😉"
+    "Оплата PRO: ⭐ Stars или 💳 крипта через @CryptoBot. "
+    "За приглашенных друзей — +15% их подписки днями PRO (/ref)."
 )
 
 
@@ -125,6 +126,30 @@ async def cb_noop(callback: CallbackQuery) -> None:
 async def cb_how_it_works(callback: CallbackQuery) -> None:
     """Кнопка «Как это работает» — экран с возвратом в меню."""
     await edit_screen(callback, HOW_IT_WORKS_TEXT, back_to_menu_kb())
+    await callback.answer()
+
+
+SUPPORT_TEXT = (
+    "🛠 <b>Тех-поддержка</b>\n"
+    "\n"
+    "Есть вопрос или проблема?\n"
+    "• Не приходит пуш / пропала сделка\n"
+    "• Оплата Stars или криптой\n"
+    "• Реферальные начисления\n"
+    "\n"
+    "Напиши нам — отвечаем по мере поступления."
+)
+
+
+@router.callback_query(F.data == "menu:support")
+async def cb_support(callback: CallbackQuery) -> None:
+    """Кнопка «Тех-поддержка» — экран с переходом в саппорт-чат."""
+    settings = get_settings()
+    await edit_screen(
+        callback,
+        SUPPORT_TEXT,
+        support_kb(settings.SUPPORT_URL),
+    )
     await callback.answer()
 
 
