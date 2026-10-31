@@ -358,6 +358,30 @@ class Database:
             "last_deal_min_ago": last_deal_min_ago,
         }
 
+    async def signals_for_verification(self, source: str, hours: int = 48) -> list[SnipeSignal]:
+        """Недавние сигналы источника для перепроверки (свежие первыми)."""
+        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        async with self.session() as session:
+            result = await session.execute(
+                select(SnipeSignal)
+                .where(SnipeSignal.source == source, SnipeSignal.created_at >= cutoff)
+                .order_by(SnipeSignal.created_at.desc())
+                .limit(200)
+            )
+            rows = list(result.scalars().all())
+            for row in rows:
+                session.expunge(row)
+            return rows
+
+    async def delete_snipe_signal(self, signal_id: int) -> bool:
+        """Удаляет запись ленты (лот изменился/продан); True если удалена."""
+        async with self.session() as session:
+            signal = await session.get(SnipeSignal, signal_id)
+            if signal is None:
+                return False
+            await session.delete(signal)
+        return True
+
     async def prune_snipe_signals(self, retention_hours: int = 24) -> int:
         """Чистит ленту сделок (snipe_signals) старше срока хранения.
 

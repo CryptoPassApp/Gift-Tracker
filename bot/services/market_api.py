@@ -906,8 +906,29 @@ class MarketAPI:
         return lots
 
     def portal_model_image(self, gift_name: str, model: str) -> str | None:
-        """Рендер модели из листингов Portals (если такой лот уже встречался)."""
+        """Рендер модели из листингов Portals (если такой лот ещё встречался)."""
         return self._portal_model_images.get(f"{gift_name}|{str(model).lower()}")
+
+    async def fetch_portals_item(self, item_id: str) -> dict[str, Any] | None:
+        """Один лот Portals по id — для перепроверки ленты.
+
+        Portals не отдает маркер аукциона в /nfts/search (price там и для
+        аукциона = текущая ставка), поэтому единственный способ понять, что
+        сделка устарела — переспросить сам предмет: статус и живую цену.
+        None = сеть/API недоступны (наугад ничего не удаляем).
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{self.settings.PORTALS_API_BASE}/nfts/{item_id}")
+        except httpx.HTTPError:
+            return None
+        if resp.status_code != 200:
+            return None
+        try:
+            data = resp.json()
+        except ValueError:
+            return None
+        return data if isinstance(data, dict) else None
 
     async def dataset_model_images(self, gift_name: str) -> dict[str, str]:
         """Официальные рендеры моделей из датасета (``models/<gift>/config.json``).
@@ -1113,6 +1134,12 @@ class MarketAPI:
         samples = self._price_samples.setdefault(gift_name, deque(maxlen=200))
         for item in items:
             sale = item.get("sale") or {}
+            # Аукционы (AuctionSale) и прочие не-фиксы: их price — текущая
+            # ставка/минимум, а не цена покупки. Раньше они попадали в ленту
+            # как «сделка 50 TON», а по факту ставки были 150 TON.
+            sale_type = str(sale.get("type") or "Sale")
+            if sale_type != "Sale":
+                continue
             price_info = sale.get("price") or {}
             try:
                 price_ton = float(price_info.get("value")) / 1e9

@@ -132,6 +132,11 @@ class Settings(BaseSettings):
     # 7 суток, а не 24: иначе при каждом рестарте лента пустеет, если на рынке
     # сейчас нет сделок ниже флора (проверено 31.10: 0 строк после чистки 24ч).
     SNIPE_SIGNALS_RETENTION_HOURS: int = Field(default=168, ge=1)
+    # Перепроверка ленты: раз в N секунд сверять недавние Portals-сделки с
+    # живым лотом. Portals не отличает аукцион от продажи в /nfts/search,
+    # а лот мог уйти в аукцион/подорожать/быть продан — запись удаляется.
+    FEED_VERIFY_INTERVAL_SEC: int = Field(default=600, ge=60)
+    FEED_VERIFY_PRICE_TOLERANCE: float = Field(default=0.05, ge=0, le=1.0)
 
     # ---------- Монетизация (крипта через Crypto Pay @CryptoBot) ----------
     # Токен приложения Crypto Pay: @CryptoBot -> Crypto Pay -> Create App.

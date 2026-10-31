@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
@@ -164,6 +166,8 @@ class SniperEngine:
         self.on_scan = on_scan
         # L1-кэш дедупликации: один и тот же лот не ходит в БД повторно.
         self._seen: OrderedDict[str, None] = OrderedDict()
+        # Периодическая перепроверка ленты (мёртвые сделки удаляются сами).
+        self._last_feed_verify: float = 0.0
 
     # ------------------------------------------------------------------
     # Основной цикл
@@ -183,6 +187,17 @@ class SniperEngine:
 
     async def scan_once(self) -> list[Signal]:
         """Один проход: получить листинги, сохранить ВСЕ в ленту, разослать пуши."""
+        # Периодическая перепроверка ленты: мёртвые сделки (лот ушёл в
+        # аукцион, подорожал, продан) вычищаются сами — иначе карточка
+        # висит днями с ценой, которой больше нет.
+        now_mono = time.monotonic()
+        if now_mono - self._last_feed_verify >= self.settings.FEED_VERIFY_INTERVAL_SEC:
+            self._last_feed_verify = now_mono
+            try:
+                await self.verify_feed()
+            except Exception:  # noqa: BLE001 — проверка не должна ломать скан
+                logger.exception("Feed verification failed")
+
         floors = await self.market.get_floors()
         lots = await self.market.get_listings()
 
@@ -240,6 +255,43 @@ class SniperEngine:
     # ------------------------------------------------------------------
     # Внутренние шаги
     # ------------------------------------------------------------------
+    async def verify_feed(self) -> int:
+        """Перепроверка недавних Portals-сделок против живых лотов.
+
+        Portals не отличает аукцион от продажи в /nfts/search (price там и
+        для аукциона = текущая ставка), поэтому свежие записи ленты
+        переспрашиваются напрямую: если лот больше не ``listed`` или цена
+        ушла дальше допуска — запись удаляется (это не сделка, а мусор).
+        Сетевые сбои записи не удаляют — только подтверждённые изменения.
+        """
+        signals = await self.db.signals_for_verification("portals", hours=48)
+        removed = 0
+        for signal in signals:
+            match = re.search(r"startapp=gift_([0-9a-fA-F-]{36})", signal.marketplace_url or "")
+            if not match:
+                continue
+            item = await self.market.fetch_portals_item(match.group(1))
+            if item is None:
+                continue
+            if str(item.get("status") or "") != "listed":
+                await self.db.delete_snipe_signal(signal.id)
+                removed += 1
+                continue
+            try:
+                live_price = float(item.get("price"))
+            except (TypeError, ValueError):
+                continue
+            if (
+                signal.deal_price > 0
+                and abs(live_price - signal.deal_price) / signal.deal_price
+                > self.settings.FEED_VERIFY_PRICE_TOLERANCE
+            ):
+                await self.db.delete_snipe_signal(signal.id)
+                removed += 1
+        if removed:
+            logger.info("Feed verification removed %d stale deal(s)", removed)
+        return removed
+
     async def _reference(self, lot: Lot, floors: dict[str, dict[str, Any]]) -> tuple[float, str]:
         """Эталонная цена лота: флор его модели, иначе флор коллекции."""
         getter = getattr(self.market, "reference_price", None)
