@@ -219,6 +219,19 @@ async def cmd_grant(message: Message, session: AsyncSession, db_user: User) -> N
         normalized,
     )
 
+    # Сообщаем получателю: PRO мог быть выдан, пока он не в чате с админом.
+    try:
+        await message.bot.send_message(
+            user.telegram_id,
+            "👑 <b>Вам выдали доступ к PRO!</b>\n"
+            f"📦 Тариф: <b>{plan_label}</b>\n"
+            f"⏳ Действует: <b>{expires}</b>\n"
+            "\n"
+            "⚡ Пуши теперь приходят мгновенно, алерты — без лимита.",
+        )
+    except Exception:  # noqa: BLE001 — уведомление не ломает выдачу
+        logger.warning("Grant notify failed for %s", user.telegram_id, exc_info=True)
+
 
 # ----------------------------------------------------------------------
 # Рассылка (FSM)
