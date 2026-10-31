@@ -23,22 +23,14 @@ from bot.config import get_settings  # noqa: E402
 DESCRIPTION_RU = (
     "GiftTracker — сканер маркетплейсов подарков Telegram.\n\n"
     "🔎 Мониторит Getgems и Portals в реальном времени\n"
-    "💰 Считает чистую прибыль по каждой сделке — комиссии и сеть учтены\n"
-    "🔔 Мгновенные уведомления о лучших предложениях\n"
-    "📊 Актуальные цены и история по 122 коллекциям\n"
-    "🧮 Калькулятор: прибыль сделки до покупки\n\n"
-    "PRO — уведомления без задержек и лимитов.\n"
-    "Оплата: Stars или крипта. Приглашай друзей — дни PRO."
+    "💰 Считает чистую прибыль по каждой сделке\n"
+    "🔔 Мгновенные уведомления о лучших предложениях"
 )
 DESCRIPTION_EN = (
     "GiftTracker — a scanner of Telegram gifts marketplaces.\n\n"
     "🔎 Monitors Getgems and Portals in real time\n"
-    "💰 Calculates net profit per deal — fees and network included\n"
-    "🔔 Instant alerts on the best offers\n"
-    "📊 Up-to-date prices and 24h history for 122 collections\n"
-    "🧮 Deal calculator — know your profit before you buy\n\n"
-    "PRO — alerts without delays or limits.\n"
-    "Pay with Stars or crypto. Invite friends — earn PRO days."
+    "💰 Calculates net profit for every deal\n"
+    "🔔 Instant alerts on the best offers"
 )
 ABOUT_RU = "Терминал снайпера подарков TG: сделки ниже флора, спреды, алерты. Рефералка +15%."
 ABOUT_EN = "Telegram gifts sniper terminal: below-floor deals, spreads, alerts. Referral +15%."
