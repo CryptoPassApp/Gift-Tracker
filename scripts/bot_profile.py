@@ -21,14 +21,24 @@ sys.path.insert(0, str(ROOT))
 from bot.config import get_settings  # noqa: E402
 
 DESCRIPTION_RU = (
-    "Снайпер-терминал подарков Telegram: живая лента сделок Getgems и Portals ниже флора, "
-    "чистый профит со спредов с учетом комиссий, флоры 122 коллекций, мгновенные алерты. "
-    "Оплата PRO: Telegram Stars или крипта. Приглашай друзей — +15% от их подписки днями PRO."
+    "GiftTracker — сканер маркетплейсов подарков Telegram.\n\n"
+    "🔎 Мониторит Getgems и Portals в реальном времени\n"
+    "💰 Считает чистую прибыль по каждой сделке — комиссии и сеть учтены\n"
+    "🔔 Мгновенные уведомления о лучших предложениях\n"
+    "📊 Актуальные цены и история по 122 коллекциям\n"
+    "🧮 Калькулятор: прибыль сделки до покупки\n\n"
+    "PRO — уведомления без задержек и лимитов.\n"
+    "Оплата: Stars или крипта. Приглашай друзей — дни PRO."
 )
 DESCRIPTION_EN = (
-    "Sniper terminal for Telegram gifts: live deal feed from Getgems & Portals below floor, "
-    "net spread profit after fees, floors for 122 collections, instant alerts. "
-    "PRO via Telegram Stars or crypto. Invite friends — earn 15% of their subscription in PRO days."
+    "GiftTracker — a scanner of Telegram gifts marketplaces.\n\n"
+    "🔎 Monitors Getgems and Portals in real time\n"
+    "💰 Calculates net profit per deal — fees and network included\n"
+    "🔔 Instant alerts on the best offers\n"
+    "📊 Up-to-date prices and 24h history for 122 collections\n"
+    "🧮 Deal calculator — know your profit before you buy\n\n"
+    "PRO — alerts without delays or limits.\n"
+    "Pay with Stars or crypto. Invite friends — earn PRO days."
 )
 ABOUT_RU = "Терминал снайпера подарков TG: сделки ниже флора, спреды, алерты. Рефералка +15%."
 ABOUT_EN = "Telegram gifts sniper terminal: below-floor deals, spreads, alerts. Referral +15%."
