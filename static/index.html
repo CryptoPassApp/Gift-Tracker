@@ -534,16 +534,16 @@
 
                 <div class="grid grid-cols-3 gap-2">
                     <div class="rounded-xl bg-[#0B0E17]/65 border border-white/[0.05] p-2.5">
-                        <p class="text-[9px] text-[#475569] uppercase font-bold tracking-widest" data-i18n="floors.median">Median Floor</p>
-                        <p id="statFloorIndex" class="num text-[15px] font-extrabold mt-1">— TON</p>
-                    </div>
-                    <div class="rounded-xl bg-[#0B0E17]/65 border border-white/[0.05] p-2.5">
-                        <p class="text-[9px] text-[#475569] uppercase font-bold tracking-widest">Signals 24h</p>
+                        <p class="text-[9px] text-[#475569] uppercase font-bold tracking-widest" data-i18n="stats.inFeed">Сделок в ленте</p>
                         <p id="statSignals" class="num text-[15px] font-extrabold mt-1 text-[#00F0FF]">0</p>
                     </div>
                     <div class="rounded-xl bg-[#0B0E17]/65 border border-white/[0.05] p-2.5">
-                        <p class="text-[9px] text-[#475569] uppercase font-bold tracking-widest">Best Deal</p>
+                        <p class="text-[9px] text-[#475569] uppercase font-bold tracking-widest" data-i18n="stats.bestDeal">Лучшая сделка</p>
                         <p id="statBest" class="num text-[15px] font-extrabold mt-1 text-[#00E676]">—%</p>
+                    </div>
+                    <div class="rounded-xl bg-[#0B0E17]/65 border border-white/[0.05] p-2.5">
+                        <p class="text-[9px] text-[#475569] uppercase font-bold tracking-widest" data-i18n="stats.marketMedian" title="Медиана флоров всех коллекций рынка — не про ленту">Медиана рынка</p>
+                        <p id="statFloorIndex" class="num text-[15px] font-extrabold mt-1">— TON</p>
                     </div>
                 </div>
             </div>
@@ -1341,7 +1341,9 @@
                 'calc.searchPlaceholder': 'Поиск по названию NFT / номеру',
                 'floors.subtitle': '{n} коллекций · флор из датасета',
                 'floors.history': ' · история 24ч копится',
-                'floors.median': 'Median Floor',
+                'stats.inFeed': 'Сделок в ленте',
+                'stats.bestDeal': 'Лучшая сделка',
+                'stats.marketMedian': 'Медиана рынка',
                 'profile.title': 'Профиль',
                 'profile.subtitle': 'Аккаунт, язык и поддержка',
                 'profile.guest': 'Гость',
@@ -1452,7 +1454,9 @@
                 'calc.searchPlaceholder': 'Search NFT / number',
                 'floors.subtitle': '{n} collections · dataset floors',
                 'floors.history': ' · 24h history is building',
-                'floors.median': 'Median Floor',
+                'stats.inFeed': 'Deals in feed',
+                'stats.bestDeal': 'Best deal',
+                'stats.marketMedian': 'Market median',
                 'profile.title': 'Profile',
                 'profile.subtitle': 'Account, language and support',
                 'profile.guest': 'Guest',
