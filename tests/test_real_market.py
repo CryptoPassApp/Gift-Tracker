@@ -14,6 +14,7 @@ from bot.services.market_api import (
     fragment_model_image,
     getgems_collection_url,
 )
+from bot.services.sniper_engine import build_signal
 
 
 def _dataset_payload() -> dict:
@@ -393,15 +394,57 @@ class TestModelAskStore:
         }}
         assert await market.reference_price(lot, floors) == (7500.0, "model:Yellow Hug")
 
-    async def test_expired_ask_falls_back_to_dataset(self, settings):
+    def test_resent_equal_ask_refreshes_ts(self, settings):
+        """Лот неделями висит по одной цене: повторный аск 7500 подтверждает
+        флор и освежает время записи, а не даёт записи протухнуть (было:
+        tsrefresh только на строго меньшую цену — через 72ч живой флор 8888
+        сменялся зависшей датасетной хотелкой 15300, лента пестрела фейковыми
+        «HOT LIQUIDATION -41%» по всем пепкам)."""
+        market = MarketAPI(settings)
+        market._record_model_asks("Plush Pepe", {"Stripes": 8888.0})
+        old_ts = time.time() - 4 * 86400
+        market._model_asks["Plush Pepe"]["Stripes"]["ts"] = old_ts
+        market._record_model_asks("Plush Pepe", {"Stripes": 8888.0})
+        entry = market._model_asks["Plush Pepe"]["Stripes"]
+        assert entry["floor"] == 8888.0
+        assert entry["ts"] > old_ts
+        # аск выше флора ничего не подтверждает: ts не трогаем
+        market._model_asks["Plush Pepe"]["Stripes"]["ts"] = old_ts
+        market._record_model_asks("Plush Pepe", {"Stripes": 9000.0})
+        assert market._model_asks["Plush Pepe"]["Stripes"]["ts"] == old_ts
+
+    def test_stale_ask_still_caps_dataset_floor(self, settings):
+        """Запись без TTL: аск, увиденный days ago, навсегда остаётся
+        потолком эталона модели. Откат на датасет «по протухании» делал
+        из живого флора 8888 фейковый «-41.9%» против датасетных 15300."""
         market = MarketAPI(settings)
         market._trait_prices["Plush Pepe"] = TraitPrices(
-            models={"Yellow Hug": 25500.0}, fetched_at=time.monotonic()
+            models={"Stripes": 15300.0}, fetched_at=time.monotonic()
         )
         market._model_asks["Plush Pepe"] = {
-            "Yellow Hug": {
-                "floor": 7500.0,
-                "ts": time.time() - settings.MODEL_ASK_TTL_SEC - 1,
-            }
+            "Stripes": {"floor": 8888.0, "ts": time.time() - 4 * 86400}
         }
-        assert market._observed_model_floor("Plush Pepe", "Yellow Hug") is None
+        assert market._observed_model_floor("Plush Pepe", "Stripes") == 8888.0
+
+    async def test_incident_stale_ask_kills_fake_liquidation(self, settings):
+        """Точный кейс 2026-11-07: Stripes #2163 по 8888 против датасетных
+        15300 пушится как «HOT LIQUIDATION -41.9%», хотя 8888 — сам флор."""
+        market = MarketAPI(settings)
+        market._trait_prices["Plush Pepe"] = TraitPrices(
+            models={"Stripes": 15300.0}, fetched_at=time.monotonic()
+        )
+        market._model_asks["Plush Pepe"] = {
+            "Stripes": {"floor": 8888.0, "ts": time.time() - 85 * 3600}
+        }
+        lot = Lot(
+            gift_name="Plush Pepe", lot_number="#2163", price=8888.0,
+            marketplace_url="https://getgems.io/nft/0:q", model="Stripes",
+        )
+        floors = {"Plush Pepe": {
+            "floor": 6470.0, "market_floors": {"getgems": 6470.0},
+        }}
+        ref, basis = await market.reference_price(lot, floors)
+        assert (ref, basis) == (8888.0, "model:Stripes")
+        signal = build_signal(lot, ref, settings, floor_basis=basis)
+        assert signal is not None
+        assert signal.discount_pct < settings.HOT_THRESHOLD_PCT

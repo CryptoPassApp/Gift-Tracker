@@ -387,3 +387,97 @@ async def test_verify_feed_keeps_getgems_when_fetch_fails(tmp_path, db, monkeypa
         source="getgems", item_address="EQe",
     )
     assert await engine.verify_feed() == 0
+
+
+async def test_tonapi_auction_interface_dropped(tmp_path):
+    """TonAPI больше не отдает sale.type — аукцион опознаём по интерфейсу
+    sale-контракта (nft_auction_v1 против nft_sale_getgems_v3/v4)."""
+    market = MarketAPI(_mk_settings(tmp_path))
+
+    async def fake_bulk(self, client, addresses):
+        return {
+            "0:aaa": ["nft_auction_v1"],          # аукцион под видом фикса
+            "0:bbb": ["nft_sale_getgems_v3"],     # честный фикс
+            "0:ccc": ["nft_sale_getgems_v4"],     # честный фикс
+        }
+
+    market._bulk_sale_interfaces = fake_bulk.__get__(market, type(market))
+    items = [
+        {"address": "0:i1", "sale": {"address": "0:aaa", "price": {"value": "2600000000"}}},
+        {"address": "0:i2", "sale": {"address": "0:bbb", "price": {"value": "50000000000"}}},
+        {"address": "0:i3", "sale": {"address": "0:ccc", "price": {"value": "250000000000"}}},
+        {"address": "0:i4", "sale": {}},  # без адреса — не проверить, не режем
+        {"address": "0:i5"},              # без sale — мимо фильтра
+    ]
+    kept = await market._drop_auction_sales(None, items)  # client не нужен: _bulk заменён
+    assert [it["address"] for it in kept] == ["0:i2", "0:i3", "0:i4", "0:i5"]
+
+
+async def test_tonapi_bulk_failure_fail_open(tmp_path):
+    """Сбой _bulk — фильтр ничего не режет (лента не опустошается)."""
+    market = MarketAPI(_mk_settings(tmp_path))
+
+    async def broken(self, client, addresses):
+        return None
+
+    market._bulk_sale_interfaces = broken.__get__(market, type(market))
+    items = [{"address": "0:i1", "sale": {"address": "0:aaa", "price": {"value": "1"}}}]
+    kept = await market._drop_auction_sales(None, items)
+    assert [it["address"] for it in kept] == ["0:i1"]
+
+
+async def test_verify_feed_removes_auction_contract(tmp_path, db, monkeypatch):
+    """Пойманная «сделка» оказалась ставкой аукциона (sale.type пуст) —
+    контракт nft_auction_v1 выдаёт: карточка удаляется."""
+    settings = _mk_settings(tmp_path)
+    market = MarketAPI(settings)
+    engine = SniperEngine(market, db, Notifier(settings), settings)
+    await _no_floors(monkeypatch, market)
+
+    async def fake_item(addr: str):
+        return {"sale": {"address": "0:auction1", "price": {"value": 2_600_000_000}}}
+
+    async def auction_yes(sale_addr: str):
+        return True
+
+    monkeypatch.setattr(market, "fetch_tonapi_item", fake_item)
+    monkeypatch.setattr(market, "is_auction_sale", auction_yes)
+    await _insert_signal(
+        db, "https://getgems.io/nft/EQauc", 2.6,
+        source="getgems", item_address="EQauc",
+    )
+    assert await engine.verify_feed() == 1
+
+    from sqlalchemy import select
+
+    async with db.session() as session:
+        left = list((await session.execute(select(SnipeSignal))).scalars())
+    assert left == []
+
+
+async def test_verify_feed_keeps_when_interface_unknown(tmp_path, db, monkeypatch):
+    """Интерфейс не узнали (сеть/лимиты) — карточку вслепую не удаляем."""
+    settings = _mk_settings(tmp_path)
+    market = MarketAPI(settings)
+    engine = SniperEngine(market, db, Notifier(settings), settings)
+    await _no_floors(monkeypatch, market)
+
+    async def fake_item(addr: str):
+        return {"sale": {"address": "0:x", "price": {"value": 52_000_000_000}}}
+
+    async def unknown(sale_addr: str):
+        return None
+
+    monkeypatch.setattr(market, "fetch_tonapi_item", fake_item)
+    monkeypatch.setattr(market, "is_auction_sale", unknown)
+    await _insert_signal(
+        db, "https://getgems.io/nft/EQx", 52.0,
+        source="getgems", item_address="EQx",
+    )
+    assert await engine.verify_feed() == 0
+
+    from sqlalchemy import func, select
+
+    async with db.session() as session:
+        count = (await session.execute(select(func.count(SnipeSignal.id)))).scalar_one()
+    assert count == 1

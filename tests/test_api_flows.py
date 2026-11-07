@@ -228,6 +228,31 @@ class TestModelsPicker:
         ]
         assert body["source"] == "dataset"
 
+    def test_models_endpoint_caps_hung_dataset_floors(self, client):
+        """Зависшая датасетная хотелка (Stripes 15300) режется аском,
+        увиденным краулером (8888) — иначе калькулятор считает «выгоду»
+        от флора, которого на рынке нет (фейк -41.9% от 2026-11-07)."""
+        import time as time_module
+
+        from bot.services.market_api import TraitPrices
+
+        market = client.app.state.market
+        market._trait_prices["Plush Pepe"] = TraitPrices(
+            models={"Stripes": 15300.0, "Hue Jester": 5304.0},
+            fetched_at=time_module.monotonic(),
+        )
+        market._model_asks["Plush Pepe"] = {"Stripes": {"floor": 8888.0, "ts": 0.0}}
+
+        body = client.get("/api/demo/models", params={"name": "Plush Pepe"}).json()
+
+        floors = {model["name"]: model["floor"] for model in body["models"]}
+        assert floors["Stripes"] == 8888.0
+        assert floors["Hue Jester"] == 5304.0
+        # порезанный Stripes поднимается в сортировке выше датасетного места
+        assert [model["name"] for model in body["models"]] == [
+            "Hue Jester", "Stripes",
+        ]
+
     def test_models_endpoint_without_dataset_prices(self, client):
         body = client.get("/api/demo/models", params={"name": "Banana"}).json()
         assert body["models"] == []

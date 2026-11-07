@@ -330,6 +330,14 @@ class SniperEngine:
                 await self.db.delete_snipe_signal(signal.id)
                 removed += 1
                 continue
+            # Аукцион под видом фикса: TonAPI больше не отдает sale.type,
+            # аукционный контракт узнаем по интерфейсу (nft_auction_v1) —
+            # «цена» в sale это текущая ставка, покупкой она не является.
+            sale_addr = str(sale.get("address") or "")
+            if sale_addr and await self.market.is_auction_sale(sale_addr) is True:
+                await self.db.delete_snipe_signal(signal.id)
+                removed += 1
+                continue
             try:
                 live_price = int(sale["price"]["value"]) / 1e9
             except (KeyError, TypeError, ValueError):

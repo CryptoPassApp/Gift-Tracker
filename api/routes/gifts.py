@@ -269,20 +269,35 @@ async def models_payload(market: Any, name: str) -> dict[str, Any]:
                 dataset_images = await dataset_loader(name)
             except Exception:  # noqa: BLE001 — картинки не должны ломать модели
                 dataset_images = {}
-        models = [
-            {
-                "name": model,
-                "floor": floor,
-                # Точный рендер из Portals, иначе официальный webp модели.
-                "image": (
-                    get_image(name, model)
-                    if get_image
-                    else None
-                )
-                or dataset_images.get(model.strip().replace("_", " ").casefold()),
-            }
-            for model, floor in sorted(prices.models.items(), key=lambda item: item[1])
-        ]
+        # Зависшие датасетные хотелки режутся реально увиденными краулером
+        # асками и здесь: иначе калькулятор показывает «Stripes 15300», когда
+        # весь рынок модели стоит с 8888 — та же ложь, что жгла ленту фейковыми
+        # «ликвидациями» (2026-11-07).
+        observed_floor = getattr(market, "_observed_model_floor", None)
+        entries: list[dict[str, Any]] = []
+        for model, floor in prices.models.items():
+            if observed_floor is not None:
+                try:
+                    seen = observed_floor(name, model)
+                except Exception:  # noqa: BLE001 — калькулятор не должен падать
+                    seen = None
+                if seen is not None and seen < floor:
+                    floor = seen
+            entries.append(
+                {
+                    "name": model,
+                    "floor": floor,
+                    # Точный рендер из Portals, иначе официальный webp модели.
+                    "image": (
+                        get_image(name, model)
+                        if get_image
+                        else None
+                    )
+                    or dataset_images.get(model.strip().replace("_", " ").casefold()),
+                }
+            )
+        entries.sort(key=lambda entry: entry["floor"])
+        models = entries
     return {
         "name": name,
         "floor": info.get("floor"),

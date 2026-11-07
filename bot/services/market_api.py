@@ -1109,6 +1109,9 @@ class MarketAPI:
                     if not items:
                         offset = 0
                         break
+                    # Аукцион под видом фикса: TonAPI больше не отдает
+                    # sale.type, аукцион отличаем по интерфейсу контракта.
+                    items = await self._drop_auction_sales(client, items)
                     lots.extend(self._parse_tonapi_items(items, name, preset))
                     if len(items) < 100:
                         offset = 0
@@ -1171,6 +1174,104 @@ class MarketAPI:
         except ValueError:
             return None
 
+    async def _bulk_sale_interfaces(
+        self, client: httpx.AsyncClient, addresses: list[str]
+    ) -> dict[str, list[str]] | None:
+        """Интерфейсы контрактов пачкой (POST /accounts/_bulk); None = не узнали.
+
+        TonAPI перестал отдавать ``sale.type`` (у аукциона и у фикса поле
+        пустое), поэтому единственный надежный признак аукциона — интерфейс
+        sale-контракта: ``nft_auction_v1`` против ``nft_sale_getgems_v3/v4``.
+        """
+        result: dict[str, list[str]] = {}
+        for start in range(0, len(addresses), 100):
+            chunk = addresses[start : start + 100]
+            if not await self._tonapi_wait():
+                return None
+            try:
+                resp = await client.post(
+                    f"{self.settings.TONAPI_BASE_URL}/accounts/_bulk",
+                    json={"account_ids": chunk},
+                )
+            except httpx.HTTPError:
+                return None
+            if resp.status_code != 200:
+                return None
+            try:
+                accounts = resp.json().get("accounts") or []
+            except ValueError:
+                return None
+            for acc in accounts:
+                addr = str(acc.get("address") or "")
+                if addr:
+                    result[addr] = [str(i) for i in (acc.get("interfaces") or [])]
+        return result
+
+    async def _drop_auction_sales(
+        self, client: httpx.AsyncClient, items: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Убирает айтемы, чей sale-контракт — аукцион, а не фикс-цена.
+
+        Ставка аукциона в ``sale.price`` не покупается: из-за пустого
+        ``sale.type`` такие лоты выглядели «сделкой −37%» (Whip Cupcake
+        «2.60 TON» при флоре 4.14 — текущая ставка на аукционе). Сбой
+        _bulk — не режем ничего (fail-open): лучше пропустить аукцион,
+        чем опустошить ленту на сетевом сбое.
+        """
+        sale_addresses = [
+            str((it.get("sale") or {}).get("address") or "")
+            for it in items
+            if it.get("sale")
+        ]
+        sale_addresses = [a for a in sale_addresses if a]
+        if not sale_addresses:
+            return items
+        ifaces = await self._bulk_sale_interfaces(client, sale_addresses)
+        if ifaces is None:
+            logger.warning(
+                "TonAPI _bulk interfaces unavailable — %d sale item(s) passed unchecked",
+                len(sale_addresses),
+            )
+            return items
+        kept: list[dict[str, Any]] = []
+        dropped = 0
+        for it in items:
+            sale_addr = str((it.get("sale") or {}).get("address") or "")
+            interfaces = ifaces.get(sale_addr) or []
+            if any("auction" in str(i).lower() for i in interfaces):
+                dropped += 1
+                continue
+            kept.append(it)
+        if dropped:
+            logger.info(
+                "TonAPI: %d auction sale(s) dropped by contract interface", dropped
+            )
+        return kept
+
+    async def is_auction_sale(self, sale_address: str) -> bool | None:
+        """True — sale-контракт аукциона; False — фикс-цена; None — не узнали.
+
+        Для перепроверки ленты: тот же признак, что и в краулере, но одним
+        запросом (GET /accounts/{addr} → interfaces).
+        """
+        if not sale_address:
+            return False
+        if not await self._tonapi_wait():
+            return None
+        url = f"{self.settings.TONAPI_BASE_URL}/accounts/{sale_address}"
+        try:
+            async with httpx.AsyncClient(timeout=10.0, headers=self._tonapi_headers()) as client:
+                resp = await client.get(url)
+        except httpx.HTTPError:
+            return None
+        if resp.status_code != 200:
+            return None
+        try:
+            interfaces = [str(i) for i in (resp.json().get("interfaces") or [])]
+        except ValueError:
+            return None
+        return any("auction" in i.lower() for i in interfaces)
+
     def _parse_tonapi_items(
         self, items: list[dict[str, Any]], gift_name: str, preset: dict[str, Any]
     ) -> list[Lot]:
@@ -1180,9 +1281,13 @@ class MarketAPI:
         samples = self._price_samples.setdefault(gift_name, deque(maxlen=200))
         for item in items:
             sale = item.get("sale") or {}
-            # Аукционы (AuctionSale) и прочие не-фиксы: их price — текущая
-            # ставка/минимум, а не цена покупки. Раньше они попадали в ленту
-            # как «сделка 50 TON», а по факту ставки были 150 TON.
+            # Аукционы и прочие не-фиксы: их price — текущая ставка/минимум,
+            # а не цена покупки. Раньше они попадали в ленту как «сделка
+            # 50 TON», а по факту ставки были 150 TON. TonAPI перестал
+            # отдавать sale.type (поле пустое и у аукциона, и у фикса) —
+            # аукционы отсекаются выше по ИНТЕРФЕЙСУ sale-контракта
+            # (_drop_auction_sales), здесь остаётся страховка на старый
+            # формат ответа, где type ещё приходил.
             sale_type = str(sale.get("type") or "Sale")
             if sale_type != "Sale":
                 continue
@@ -1270,13 +1375,22 @@ class MarketAPI:
         return lots
 
     def _record_model_asks(self, gift_name: str, asks: dict[str, float]) -> None:
-        """Запоминает минимальные увиденные аски по моделям (только вниз)."""
+        """Запоминает минимальные увиденные аски по моделям (только вниз).
+
+        Аск, РАВНЫЙ сохранённому, освежает время записи: самый дешёвый лот
+        модели может неделями висеть по одной цене, и это живое подтверждение
+        флора, а не повод списывать его со счетов (было: ts не трогался при
+        равной цене, через 72ч запись «протухала» и эталон съедал зависшую
+        датасетную хотелку — фейковые «HOT LIQUIDATION» по всем пепкам).
+        Аск ВЫШЕ сохранённого ничего не подтверждает — не трогаем.
+        """
         store = self._model_asks.setdefault(gift_name, {})
         now = time.time()
         changed = False
         for model, price in asks.items():
             entry = store.get(model)
-            if entry is None or price < float(entry.get("floor") or 0.0):
+            cur = float(entry.get("floor") or 0.0) if entry else 0.0
+            if entry is None or price <= cur:
                 store[model] = {"floor": round(float(price), 2), "ts": now}
                 changed = True
         if changed:
@@ -1284,11 +1398,16 @@ class MarketAPI:
             self._save_model_asks()
 
     def _observed_model_floor(self, gift_name: str, model: str) -> float | None:
-        """Минимальный увиденный краулером аск модели, пока запись свежая."""
+        """Минимальный аск модели, когда-либо увиденный краулером, без TTL.
+
+        Реальный аск с Getgems — жёсткий потолок истинного флора модели на
+        всё время хранения: устарев НИЖЕ рынка, он стоит пропущенных сделок
+        (безопасно), а откат на датасет после «протухания» стоит фейковых
+        «-41% HOT LIQUIDATION» по зависшим хотелкам (недопустимо). Датасет
+        эталон дополнительно понижает в reference_price через min().
+        """
         entry = (self._model_asks.get(gift_name) or {}).get(model)
         if not entry:
-            return None
-        if time.time() - float(entry.get("ts") or 0.0) > self.settings.MODEL_ASK_TTL_SEC:
             return None
         floor = float(entry.get("floor") or 0.0)
         return floor if floor > 0 else None
