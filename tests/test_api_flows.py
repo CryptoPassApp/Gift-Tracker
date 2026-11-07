@@ -237,9 +237,14 @@ class TestModelsPicker:
 class TestReferral:
     def test_me_returns_referral_link_and_invites(self, client, auth):
         body = client.get("/api/user/me", headers=auth).json()
-        assert body["referral_link"] == (
-            f"https://t.me/GiftTracker_App?start=ref_{USER['id']}"
-        )
+        # Ссылка строится из персонального КОДА, а не из telegram_id.
+        assert body["referral_link"].startswith("https://t.me/GiftTracker_App?start=ref_")
+        code = body["referral_link"].split("ref_")[1]
+        assert len(code) == 8 and code.upper() == code and code.isalnum()
+        assert str(USER["id"]) not in code
+        # Код стабилен: второй запрос возвращает ту же ссылку.
+        again = client.get("/api/user/me", headers=auth).json()
+        assert again["referral_link"] == body["referral_link"]
         assert body["invited_count"] == 0
 
 

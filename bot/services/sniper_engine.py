@@ -71,6 +71,36 @@ class Signal:
         }
 
 
+def reprice_pricing(
+    floor_price: float,
+    deal_price: float,
+    *,
+    source: str | None,
+    floor_basis: str | None,
+    settings: Settings,
+) -> tuple[float, float]:
+    """Дисконт (%) и чистый профит (TON) для пары цен — формула build_signal.
+
+    Отдельная функция, чтобы перепроверка ленты считала обновлённую
+    карточку ровно той же математикой, что и первичный сигнал: иначе
+    карточка после живого апдейта цены начала бы врать относительно новых.
+    """
+    if floor_price <= 0 or deal_price <= 0:
+        return 0.0, 0.0
+    # Дисконт может быть отрицательным (лот дороже эталона) — такие лоты
+    # в ленту не попадают, их отсекает scan_once до сохранения.
+    discount = round(((floor_price - deal_price) / floor_price) * 100, 1)
+    # Эталон "mrkt_bid" — выход через ордер-автобай MRKT: комиссия их маркета.
+    if (floor_basis or "") == "mrkt_bid":
+        fee = getattr(settings, "MRKT_FEE", 0.05)
+    elif hasattr(settings, "fee_for_source"):
+        fee = settings.fee_for_source(source)
+    else:
+        fee = getattr(settings, "GETGEMS_FEE", 0.05)
+    net_profit = round((floor_price * (1 - fee)) - deal_price - settings.TON_GAS, 2)
+    return discount, net_profit
+
+
 def build_signal(
     lot: Lot, floor_price: float, settings: Settings, *, floor_basis: str | None = None
 ) -> Signal | None:
@@ -83,17 +113,9 @@ def build_signal(
     if floor_price <= 0 or lot.price <= 0:
         return None
 
-    # Дисконт может быть отрицательным (лот дороже эталона) — такие лоты
-    # в ленту не попадают, их отсекает scan_once до сохранения.
-    discount = round(((floor_price - lot.price) / floor_price) * 100, 1)
-    # Эталон "mrkt_bid" — выход через ордер-автобай MRKT: комиссия их маркета.
-    if (floor_basis or "") == "mrkt_bid":
-        fee = getattr(settings, "MRKT_FEE", 0.05)
-    elif hasattr(settings, "fee_for_source"):
-        fee = settings.fee_for_source(lot.source)
-    else:
-        fee = getattr(settings, "GETGEMS_FEE", 0.05)
-    net_profit = round((floor_price * (1 - fee)) - lot.price - settings.TON_GAS, 2)
+    discount, net_profit = reprice_pricing(
+        floor_price, lot.price, source=lot.source, floor_basis=floor_basis, settings=settings
+    )
     is_hot = discount >= settings.HOT_THRESHOLD_PCT
 
     return Signal(
@@ -122,7 +144,8 @@ def is_feed_worthy(signal: Signal, min_profit_ton: float = 0.0) -> bool:
     Лента снайпера — не список всех листингов маркета: в ней только лоты,
     которые дешевле эталона и дают чистый профит выше порога. Порог нужен,
     потому что лоты с +0.03 TON после комиссии маркетплейса — это ноль,
-    а не сделка: деньги съест комиссия и газ.
+    а не сделка: деньги съест комиссия и газ. Понижать порог до «любого
+    плюса» нельзя — лента снова забивается пылью (+0.02..0.15 TON).
     """
     return (
         signal.discount_pct > 0
@@ -260,12 +283,17 @@ class SniperEngine:
 
         Portals не отличает аукцион от продажи в /nfts/search (price там и
         для аукциона = текущая ставка), поэтому свежие записи ленты
-        переспрашиваются напрямую: если лот больше не ``listed`` или цена
-        ушла дальше допуска — запись удаляется (это не сделка, а мусор).
-        Сетевые сбои записи не удаляют — только подтверждённые изменения.
+        переспрашиваются напрямую: если лот больше не ``listed`` — запись
+        удаляется; если цена уехала — карточка ПЕРЕСЧИТЫВАЕТСЯ под живую
+        цену (вверх за допуск — удаляется: это уже не та сделка). Сетевые
+        сбои ничего не меняют — только подтверждённые изменения.
+        Вторая проверка — сверка с текущими флорами обеих площадок: эталон
+        на карточке обновляется вслед за рынком, а сделка, оказавшаяся
+        выше нового эталона, удаляется.
         """
         signals = await self.db.signals_for_verification("portals", hours=48)
         removed = 0
+        updated = 0
         for signal in signals:
             match = re.search(r"startapp=gift_([0-9a-fA-F-]{36})", signal.marketplace_url or "")
             if not match:
@@ -281,16 +309,159 @@ class SniperEngine:
                 live_price = float(item.get("price"))
             except (TypeError, ValueError):
                 continue
-            if (
-                signal.deal_price > 0
-                and abs(live_price - signal.deal_price) / signal.deal_price
-                > self.settings.FEED_VERIFY_PRICE_TOLERANCE
-            ):
+            result = await self._apply_live_price(signal, live_price)
+            if result == "removed":
+                removed += 1
+            elif result == "updated":
+                updated += 1
+        # То же для getgems-лотов, но через TonAPI: у Portals был свой
+        # факт-чекер, а getgems-карточки жили в ленте даже когда лот уже
+        # куплен, ушёл в аукцион или продавец поднял цену. TonAPI отвечает
+        # sale-объектом только у лота, который реально стоит на продаже.
+        for signal in await self.db.signals_for_verification("getgems", hours=48):
+            if not signal.item_address:
+                continue
+            item = await self.market.fetch_tonapi_item(signal.item_address)
+            if item is None:
+                continue  # сеть/лимиты — наугад ничего не удаляем
+            sale = item.get("sale") or {}
+            if not sale or str(sale.get("type") or "") == "AuctionSale":
+                # продан/снят с продажи либо конвертирован в аукцион.
                 await self.db.delete_snipe_signal(signal.id)
                 removed += 1
-        if removed:
-            logger.info("Feed verification removed %d stale deal(s)", removed)
+                continue
+            try:
+                live_price = int(sale["price"]["value"]) / 1e9
+            except (KeyError, TypeError, ValueError):
+                continue
+            result = await self._apply_live_price(signal, live_price)
+            if result == "removed":
+                removed += 1
+            elif result == "updated":
+                updated += 1
+        # Сверка с ТЕКУЩИМИ флорами: рынок едет — сделка, пойманная ниже флора,
+        # после общего пересчёта рынка оказывается выше нового флора. Такая строка
+        # уже не сделка и только вводит в заблуждение (карточка показывает скидку
+        # от старого флора). Флоры берём из общего кэша — те же, что ест скан.
+        # Model-базис перепроверяем тем же reference_price: его эталон может
+        # упасть, когда краулер увидел реальные аски модели (датасет врёт).
+        # Сделка ниже нового эталона остаётся, но зачёркнутый флор и дисконт
+        # на карточке обновляются: «46 TON» при живом флоре 45 — то же враньё,
+        # что и устаревшая цена лота.
+        recent: list[Any] = []
+        seen_ids: set[int] = set()
+        for source in ("getgems", "portals"):
+            for sig in await self.db.signals_for_verification(source, hours=48):
+                if sig.id not in seen_ids:
+                    seen_ids.add(sig.id)
+                    recent.append(sig)
+        if recent:
+            try:
+                floors = await self.market.get_floors()
+            except Exception:  # noqa: BLE001 — нет флоров, нет сверки, вслепую не удаляем
+                floors = {}
+            for signal in recent:
+                ref = 0.0
+                ref_basis: str | None = None
+                if signal.floor_basis == "collection":
+                    info = floors.get(signal.gift_name) or {}
+                    ref = (info.get("market_floors") or {}).get(signal.source)
+                elif (signal.floor_basis or "").startswith("model:"):
+                    stub = Lot(
+                        gift_name=signal.gift_name,
+                        lot_number=signal.lot_number,
+                        price=signal.deal_price,
+                        marketplace_url=signal.marketplace_url or "",
+                        item_address=signal.item_address,
+                        image_url=signal.image_url,
+                        source=signal.source,
+                        model=signal.model,
+                        backdrop=signal.backdrop,
+                        symbol=signal.symbol,
+                    )
+                    try:
+                        ref, ref_basis = await self.market.reference_price(stub, floors)
+                    except Exception:  # noqa: BLE001 — сверка не должна ронять скан
+                        continue
+                try:
+                    ref = float(ref or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                if ref > 0 and signal.deal_price > 0 and signal.deal_price >= ref:
+                    await self.db.delete_snipe_signal(signal.id)
+                    removed += 1
+                    continue
+                # mrkt_bid-эталон — это чужая ставка покупателя, а не флор
+                # карточки: её не показываем и в зачёркнутый флор не пишем.
+                if ref_basis == "mrkt_bid":
+                    continue
+                try:
+                    stored_floor = round(float(signal.floor_price or 0.0), 2)
+                except (TypeError, ValueError):
+                    continue
+                if ref > 0 and abs(round(ref, 2) - stored_floor) >= 0.005:
+                    discount, profit = reprice_pricing(
+                        ref,
+                        float(signal.deal_price or 0.0),
+                        source=signal.source,
+                        floor_basis=signal.floor_basis,
+                        settings=self.settings,
+                    )
+                    await self.db.update_snipe_signal_pricing(
+                        signal.id,
+                        deal_price=float(signal.deal_price or 0.0),
+                        discount_pct=discount,
+                        net_profit_ton=profit,
+                        floor_price=round(ref, 2),
+                    )
+                    updated += 1
+
+        if removed or updated:
+            logger.info(
+                "Feed verification: %d stale deal(s) removed, %d card(s) repriced to live market",
+                removed,
+                updated,
+            )
         return removed
+
+    async def _apply_live_price(self, signal: Any, live_price: float) -> str | None:
+        """Сверяет карточку с живой ценой лота: "removed" | "updated" | None.
+
+        Лот жив, но цена на маркете уехала. Вверх за допуск — продавец
+        передумал, это уже не та сделка: карточка удаляется. Вниз (любой
+        размер) или вверх в пределах допуска — карточка ПЕРЕСЧИТЫВАЕТСЯ
+        под живую цену: показывать «46 TON», когда на маркете уже 45 —
+        ровно то, за что ленту ругают; а сделку, подешевевшую на 100 TON,
+        удалять вместо обновления — терять лучшую цену входа.
+        """
+        try:
+            stored = float(signal.deal_price)
+        except (TypeError, ValueError):
+            return None
+        if stored <= 0 or live_price <= 0:
+            return None
+        if live_price > stored:
+            deviation = (live_price - stored) / stored
+            if deviation > self.settings.FEED_VERIFY_PRICE_TOLERANCE:
+                # продавец поднял цену за допуск: это уже не та сделка.
+                await self.db.delete_snipe_signal(signal.id)
+                return "removed"
+        if abs(round(live_price, 2) - round(stored, 2)) < 0.005:
+            return None  # цена не изменилась
+        discount, profit = reprice_pricing(
+            float(signal.floor_price or 0.0),
+            live_price,
+            source=signal.source,
+            floor_basis=signal.floor_basis,
+            settings=self.settings,
+        )
+        await self.db.update_snipe_signal_pricing(
+            signal.id,
+            deal_price=live_price,
+            discount_pct=discount,
+            net_profit_ton=profit,
+        )
+        return "updated"
 
     async def _reference(self, lot: Lot, floors: dict[str, dict[str, Any]]) -> tuple[float, str]:
         """Эталонная цена лота: флор его модели, иначе флор коллекции."""
@@ -371,4 +542,4 @@ class SniperEngine:
         return list((await session.execute(stmt)).scalars())
 
 
-__all__ = ["Signal", "SniperEngine", "build_signal", "evaluate_lot", "is_feed_worthy"]
+__all__ = ["Signal", "SniperEngine", "build_signal", "evaluate_lot", "is_feed_worthy", "reprice_pricing"]

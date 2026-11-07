@@ -26,6 +26,7 @@ from aiogram.types import BotCommand
 from bot.config import get_settings
 from bot.database import Database
 from bot.handlers import admin, alerts, referral, start, subscription
+from bot.licensing import LicenseError, ensure_licensed
 from bot.logging_setup import configure_logging
 from bot.middleware import AuthMiddleware
 from bot.services.crypto_payments import CryptoPaymentService
@@ -132,6 +133,18 @@ async def main() -> None:
             "BOT_TOKEN is not configured. Open gift_tracker/.env and set BOT_TOKEN "
             "to the token from @BotFather (/newbot)."
         )
+        sys.exit(1)
+
+    # Лицензия: подпись продавца + привязка к этому боту и его владельцу.
+    try:
+        license_info = ensure_licensed(settings.BOT_TOKEN, settings.ADMIN_IDS)
+        logger.info(
+            "License OK: buyer=%s, expires=%s",
+            license_info["buyer"],
+            license_info["expires"] or "never",
+        )
+    except LicenseError as exc:
+        logger.error("License check failed: %s", exc)
         sys.exit(1)
 
     # Инфраструктура.

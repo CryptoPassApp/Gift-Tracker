@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
 from api.dependencies import get_current_user
+from bot.database import ensure_referral_code
 from bot.models import User
 
 router = APIRouter(prefix="/user", tags=["user"])
@@ -40,6 +41,9 @@ async def get_me(request: Request, user: User = Depends(get_current_user)) -> di
         invited = await session.scalar(
             select(func.count(User.id)).where(User.referred_by == user.id)
         )
+        # Персональный код (не telegram_id) в реферальной ссылке — создается лениво.
+        code = await ensure_referral_code(session, await session.get(User, user.id))
+    payload = code or str(user.telegram_id)
     return {
         "id": user.id,
         "telegram_id": user.telegram_id,
@@ -51,7 +55,7 @@ async def get_me(request: Request, user: User = Depends(get_current_user)) -> di
         # Фильтр реально применяется только к PRO; FREE видит 0 как «выключен».
         "effective_min_discount": float(user.min_discount or 0.0) if user.is_pro_active() else 0.0,
         # Реферальная программа: ссылка и сколько друзей уже пришло.
-        "referral_link": f"https://t.me/{settings.BOT_USERNAME}?start=ref_{user.telegram_id}",
+        "referral_link": f"https://t.me/{settings.BOT_USERNAME}?start=ref_{payload}",
         "invited_count": int(invited or 0),
     }
 

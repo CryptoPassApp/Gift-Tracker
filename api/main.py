@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -19,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from api.routes import alerts, demo, gifts, internal, user
 from bot.config import get_settings
 from bot.database import Database
+from bot.licensing import LicenseError, ensure_licensed
 from bot.logging_setup import configure_logging
 from bot.services.heartbeat import heartbeat_status
 from bot.services.maintenance import MaintenanceService
@@ -35,8 +37,26 @@ def create_app(settings: "Settings | None" = None) -> FastAPI:
 
     ``settings`` можно передать в тестах; по умолчанию берется get_settings().
     """
+    passed_explicitly = settings is not None
     settings = settings or get_settings()
     configure_logging(settings)
+
+    # Лицензия — только для реального запуска: тесты передают settings явно
+    # и живут под pytest (проверка не должна ломать их коллекцию/ран).
+    if (
+        not passed_explicitly
+        and "pytest" not in sys.modules
+        and "PLACEHOLDER" not in (settings.BOT_TOKEN or "")
+    ):
+        try:
+            license_info = ensure_licensed(settings.BOT_TOKEN, settings.ADMIN_IDS)
+            logger.info(
+                "License OK: buyer=%s, expires=%s",
+                license_info["buyer"],
+                license_info["expires"] or "never",
+            )
+        except LicenseError as exc:
+            raise RuntimeError(f"License check failed: {exc}") from exc
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

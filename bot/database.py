@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -71,6 +72,7 @@ def _patch_schema(sync_connection) -> None:  # noqa: ANN001 — sqlalchemy callb
         "users": {
             "min_discount": "ALTER TABLE users ADD COLUMN min_discount REAL DEFAULT 0 NOT NULL",
             "referred_by": "ALTER TABLE users ADD COLUMN referred_by INTEGER",
+            "referral_code": "ALTER TABLE users ADD COLUMN referral_code VARCHAR(16)",
         },
     }
     for table, columns in migrations.items():
@@ -81,6 +83,14 @@ def _patch_schema(sync_connection) -> None:  # noqa: ANN001 — sqlalchemy callb
             if column not in existing:
                 sync_connection.execute(text(ddl))
                 logger.info("Migrated %s: added column %s", table, column)
+
+    # Персональные реферальные коды: UNIQUE-индекс (несколько NULL не конфликтуют).
+    if inspector.has_table("users") and "referral_code" in {
+        column["name"] for column in inspector.get_columns("users")
+    }:
+        sync_connection.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_referral_code ON users (referral_code)")
+        )
 
     _rename_legacy_gifts(sync_connection)
     _migrate_getgems_urls(sync_connection)
@@ -382,6 +392,33 @@ class Database:
             await session.delete(signal)
         return True
 
+    async def update_snipe_signal_pricing(
+        self,
+        signal_id: int,
+        *,
+        deal_price: float,
+        discount_pct: float,
+        net_profit_ton: float,
+        floor_price: float | None = None,
+    ) -> bool:
+        """Обновляет цены карточки после живой перепроверки лота.
+
+        Лот жив, но цена на маркете уехала (продавец снизил или чуть
+        поднял): карточка должна показывать реальную цену, а не
+        замороженную на момент скана. ``floor_price`` обновляется, когда
+        уехал сам эталон (флор коллекции/модели). True — строка найдена.
+        """
+        async with self.session() as session:
+            signal = await session.get(SnipeSignal, signal_id)
+            if signal is None:
+                return False
+            signal.deal_price = round(float(deal_price), 2)
+            signal.discount_pct = round(float(discount_pct), 1)
+            signal.net_profit_ton = round(float(net_profit_ton), 2)
+            if floor_price is not None:
+                signal.floor_price = round(float(floor_price), 2)
+        return True
+
     async def prune_snipe_signals(self, retention_hours: int = 24) -> int:
         """Чистит ленту сделок (snipe_signals) старше срока хранения.
 
@@ -559,7 +596,7 @@ async def get_or_create_user(session: AsyncSession, tg_user: dict) -> User:
     return user
 
 
-async def activate_pro(session: AsyncSession, user: User, plan: str, month_days: int = 30) -> None:
+async def activate_pro(session: AsyncSession, user: User, plan: str, month_days: float = 30) -> None:
     """Активирует/продлевает PRO согласно тарифу."""
     now = datetime.utcnow()
     lifetime = plan == "pro_lifetime"
@@ -643,6 +680,61 @@ async def award_referral(
     return referrer, days
 
 
+async def award_referral_invite(
+    session: AsyncSession,
+    referred_user: User,
+    settings: Settings | None = None,
+) -> tuple[User, float] | None:
+    """Начисляет пригласившему +REFERRAL_INVITE_HOURS часов PRO за факт приглашения.
+
+    Вызывается из start.py в момент привязки ``referred_by`` по deep-link —
+    час начисляется сразу, без покупок приглашенного. Идемпотентно:
+    ``payment_ref = "invite:<referred_user.id>"`` уникален на уровне таблицы
+    (уникальный индекс), поэтому повторный /start того же юзера второй час
+    не дает; самореферал и юзер без пригласившего отсечены.
+
+    Возвращает ``(referrer, hours)`` или ``None``.
+    """
+    if not referred_user.referred_by:
+        return None
+    referrer = await session.get(User, referred_user.referred_by)
+    if referrer is None or referrer.id == referred_user.id:
+        return None
+
+    payment_ref = f"invite:{referred_user.id}"
+    existing = (
+        await session.execute(
+            select(ReferralReward).where(ReferralReward.payment_ref == payment_ref)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return None
+
+    settings = settings or get_settings()
+    hours = float(settings.REFERRAL_INVITE_HOURS)
+    if hours <= 0:
+        return None
+    session.add(
+        ReferralReward(
+            referrer_user_id=referrer.id,
+            referred_user_id=referred_user.id,
+            payment_ref=payment_ref,
+            days_awarded=hours / 24.0,
+            source="invite",
+        )
+    )
+    # Час поверх текущей подписки (Lifetime-юзеру даты не двигаем —
+    # activate_pro сам не даст переполнения 9999-года).
+    await activate_pro(session, referrer, "pro_month", month_days=hours / 24.0)
+    logger.info(
+        "Referral invite reward: referrer=%s +%.2fh PRO (from user %s)",
+        referrer.telegram_id,
+        hours,
+        referred_user.telegram_id,
+    )
+    return referrer, hours
+
+
 async def referral_stats(session: AsyncSession, user: User) -> tuple[int, float]:
     """Сколько юзеров пригласил пользователь и суммарно заработанных дней."""
     from sqlalchemy import func
@@ -662,13 +754,74 @@ async def referral_stats(session: AsyncSession, user: User) -> tuple[int, float]
     return int(invited), float(earned)
 
 
+# Персональные реферальные коды: случайные, НЕ привязаны к telegram_id —
+# ссылку можно шарить, не светя свой айди. Алфавит без 0/O/1/I, чтобы код
+# не читался двояко при перепечатке.
+REFERRAL_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+REFERRAL_CODE_LENGTH = 8
+
+
+async def ensure_referral_code(session: AsyncSession, user: User) -> str | None:
+    """Персональный реферальный код пользователя (создается при первом запросе).
+
+    Выдается лениво и живет в ``users.referral_code`` (UNIQUE). На старые
+    ссылки ``ref_<telegram_id>`` не влияет — ``resolve_referral`` понимает
+    оба формата.
+    """
+    if user.referral_code:
+        return user.referral_code
+    for _ in range(10):
+        code = "".join(
+            secrets.choice(REFERRAL_CODE_ALPHABET) for _ in range(REFERRAL_CODE_LENGTH)
+        )
+        taken = (
+            await session.execute(select(User.id).where(User.referral_code == code))
+        ).scalar_one_or_none()
+        if taken is None:
+            user.referral_code = code
+            await session.flush()
+            return code
+    # 10 коллизий подряд невозможны на практике (30^8 вариантов) — зовём
+    # вызывающего строить легаси-ссылку по telegram_id.
+    logger.warning("Referral code generation failed for user %s", user.telegram_id)
+    return None
+
+
+async def resolve_referral(session: AsyncSession, raw_payload: str, for_user: User) -> User | None:
+    """Находит пригласившего по payload deep-link.
+
+    Понимает оба формата: ``ref_<CODE>`` (персональный код, регистр не важен)
+    и ``ref_<telegram_id>`` (легаси-ссылки, уже разосланные юзерам).
+    Самореферал и неизвестный код дают ``None``.
+    """
+    if not raw_payload.startswith("ref_"):
+        return None
+    raw = raw_payload[4:]
+    if not raw:
+        return None
+    if raw.isdigit():
+        referrer = (
+            await session.execute(select(User).where(User.telegram_id == int(raw)))
+        ).scalar_one_or_none()
+    else:
+        referrer = (
+            await session.execute(select(User).where(User.referral_code == raw.upper()))
+        ).scalar_one_or_none()
+    if referrer is None or referrer.telegram_id == for_user.telegram_id:
+        return None
+    return referrer
+
+
 __all__ = [
     "Database",
     "init_db",
     "create_engine_from_settings",
     "get_or_create_user",
     "activate_pro",
+    "award_referral_invite",
     "count_active_alerts",
+    "ensure_referral_code",
+    "resolve_referral",
     "Alert",
     "FloorSnapshot",
     "Payment",

@@ -33,6 +33,10 @@ class User(Base):
     min_discount: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     # Реферал: id пользователя, который пригласил (deep-link /start ref_<tg_id>).
     referred_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Персональный реферальный код: случайный, НЕ привязан к telegram_id —
+    # ссылку ref_<CODE> можно шарить, не светя свой айди. Выдается лениво
+    # (database.ensure_referral_code), UNIQUE-индекс в _patch_schema.
+    referral_code: Mapped[str | None] = mapped_column(String(16), unique=True, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     last_active_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)

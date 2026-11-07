@@ -33,6 +33,8 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
         # Кэш адресов коллекций тоже изолируем: иначе тесты подхватят
         # реальный data/gift_collections.json и «найдут» адреса у всех.
         "GIFT_COLLECTIONS_FILE": str(tmp_path / "gift_collections.json"),
+        # Аски моделей краулер пишет на диск — только во временную папку.
+        "MODEL_ASKS_FILE": str(tmp_path / "model_asks.json"),
         "INIT_DATA_MAX_AGE_SEC": 0,  # в тестах датасет auth_date статичен (1770000000)
         "_env_file": None,  # игнорируем .env окружения разработчика
     }

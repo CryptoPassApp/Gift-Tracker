@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import get_settings
+from bot.database import award_referral_invite, resolve_referral
 from bot.handlers.ui import edit_screen
 from bot.keyboards import back_to_menu_kb, main_menu_kb, support_kb
 from bot.models import User
@@ -71,25 +72,25 @@ async def cmd_start(message: Message, session: AsyncSession, db_user: User) -> N
 
 
 async def _apply_referral(message: Message, session: AsyncSession, db_user: User) -> None:
-    """Запоминает пригласившего из deep-link ``/start ref_<telegram_id>``."""
+    """Запоминает пригласившего из deep-link ``/start ref_<код|tg_id>``.
+
+    Код — персональный случайный, не светит telegram_id (см.
+    database.ensure_referral_code); старые ``ref_<tg_id>``-ссылки работают.
+    При первой привязке пригласивший сразу получает +REFERRAL_INVITE_HOURS
+    часов PRO (database.award_referral_invite — идемпотентно). Упоминание
+    механики — только на экране /ref, нигде больше ее не рекламируем.
+    """
     text = message.text or ""
     parts = text.split(maxsplit=1)
     payload = parts[1].strip() if len(parts) > 1 else ""
     if not payload.startswith("ref_") or db_user.referred_by:
         return
-    try:
-        referrer_tg = int(payload[4:])
-    except ValueError:
-        return
-    if referrer_tg == db_user.telegram_id:
-        return
-    referrer = (
-        await session.execute(select(User).where(User.telegram_id == referrer_tg))
-    ).scalar_one_or_none()
+    referrer = await resolve_referral(session, payload, db_user)
     if referrer is None:
         return
     db_user.referred_by = referrer.id
     await session.flush()
+    await award_referral_invite(session, db_user)
 
 
 @router.message(Command("help"))

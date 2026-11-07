@@ -223,7 +223,8 @@ class TestListingsAcrossCollections:
             return [{
                 "address": "0:nft" + address[-2:],
                 "metadata": {"name": "Gift #7"},
-                "sale": {"price": {"value": "10000000000"}},
+                "sale": {"price": {"value": "10000000000"},
+                         "market": {"name": "Getgems Sales"}},
             }]
 
         market._fetch_tonapi_page = fake_page  # type: ignore[assignment]

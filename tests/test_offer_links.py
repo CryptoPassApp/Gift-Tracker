@@ -174,7 +174,8 @@ class TestFriendlyAddressConversion:
         items = [
             {
                 "address": "0:c73e75bf0037e4944b132f61f286f938873ce823c8a1c5f28806112e358f96c6",
-                "sale": {"price": {"value": "499000000000"}},
+                "sale": {"price": {"value": "499000000000"},
+                         "market": {"name": "Getgems Sales"}},
                 "metadata": {"name": "Mighty Arm #2494"},
             }
         ]

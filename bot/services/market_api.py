@@ -388,6 +388,11 @@ class MarketAPI:
         self._catalog: dict[str, dict[str, Any]] = {}
         # Флоры по атрибутам (Model/Backdrop/Symbol) на коллекцию.
         self._trait_prices: dict[str, TraitPrices] = {}
+        # Реально увиденные минимальные аски по моделям: gift -> model ->
+        # {"floor": TON, "ts": unix}. Понижают доверчивые флоры датасета.
+        self._model_asks: dict[str, dict[str, dict[str, float]]] = {}
+        self._model_asks_dirty = False
+        self._load_model_asks()
         # TonAPI: троттлинг запросов и пауза после 429 (анонимный лимит — сутки).
         self._tonapi_next_request_at: float = 0.0
         self._tonapi_cooldown_until: float = 0.0
@@ -416,14 +421,24 @@ class MarketAPI:
         self._ton_usd_rate_cached_at: float = 0.0
         self._load_collection_index_cache()
 
+    def _tonapi_headers(self) -> dict[str, str]:
+        """Заголовки для TonAPI: с ключом, если он задан в .env.
+
+        Без ключа действует анонимный лимит, привязанный к IP: на
+        выделенном сервере (Oracle и т.п.) этот пул обычно выжжен
+        соседями по адресу, и каждый запрос получает 429.
+        """
+        headers = {"User-Agent": "GiftTracker/1.0", "Accept": "application/json"}
+        if self.settings.TONAPI_KEY:
+            headers["Authorization"] = f"Bearer {self.settings.TONAPI_KEY}"
+        return headers
+
     async def fetch_ton_usd_rate(self) -> float:
         """Получает живой курс TON/USD из TonAPI (кэш 5 минут, fallback из настроек)."""
         now = time.monotonic()
         if self._ton_usd_rate_cached_at and (now - self._ton_usd_rate_cached_at) < 300:
             return self._ton_usd_rate
-        headers = {"User-Agent": "GiftTracker/1.0", "Accept": "application/json"}
-        if self.settings.TONAPI_KEY:
-            headers["Authorization"] = f"Bearer {self.settings.TONAPI_KEY}"
+        headers = self._tonapi_headers()
         try:
             async with httpx.AsyncClient(timeout=8.0, headers=headers) as client:
                 resp = await client.get("https://tonapi.io/v2/rates?tokens=ton&currencies=usd")
@@ -930,6 +945,33 @@ class MarketAPI:
             return None
         return data if isinstance(data, dict) else None
 
+    async def fetch_tonapi_item(self, item_address: str) -> dict[str, Any] | None:
+        """Один NFT Getgems по адресу - для перепроверки ленты.
+
+        Portals-сделки перепроверяются их API, а у getgems-лотов без этого
+        статуса «куплен / ушёл в аукцион / продавец поднял цену» не видно:
+        карточка с ценой, которой уже нет, висит в ленте днями. TonAPI
+        отвечает ``sale`` только у лота, который реально стоит на продаже.
+        None = сеть/API недоступны (наугад ничего не удаляем).
+        """
+        if not item_address or not str(item_address).startswith(("EQ", "UQ", "0:")):
+            return None
+        if not await self._tonapi_wait():
+            return None
+        url = f"{self.settings.TONAPI_BASE_URL}/nfts/{item_address}"
+        try:
+            async with httpx.AsyncClient(timeout=10.0, headers=self._tonapi_headers()) as client:
+                resp = await client.get(url)
+        except httpx.HTTPError:
+            return None
+        if resp.status_code != 200:
+            return None
+        try:
+            data = resp.json()
+        except ValueError:
+            return None
+        return data if isinstance(data, dict) else None
+
     async def dataset_model_images(self, gift_name: str) -> dict[str, str]:
         """Официальные рендеры моделей из датасета (``models/<gift>/config.json``).
 
@@ -1052,7 +1094,10 @@ class MarketAPI:
 
         selected = self._scan_collections()
         lots: list[Lot] = []
-        headers = {"User-Agent": "GiftTracker/1.0", "Accept": "application/json"}
+        # Ключ обязателен на выделенном IP (Oracle и т.п.): анонимный пул
+        # адреса выжжен соседями, без ключа каждый запрос получает 429
+        # (было: краулер ходил кейлесс, пока rates/floors — с ключом).
+        headers = self._tonapi_headers()
         async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
             for name, address in selected:
                 preset = self._catalog.get(name) or {}
@@ -1131,6 +1176,7 @@ class MarketAPI:
     ) -> list[Lot]:
         """Превращает sale-айтемы TonAPI в лоты; без sale — пропускает."""
         lots: list[Lot] = []
+        ghost_skipped = 0
         samples = self._price_samples.setdefault(gift_name, deque(maxlen=200))
         for item in items:
             sale = item.get("sale") or {}
@@ -1139,6 +1185,15 @@ class MarketAPI:
             # как «сделка 50 TON», а по факту ставки были 150 TON.
             sale_type = str(sale.get("type") or "Sale")
             if sale_type != "Sale":
+                continue
+            # Только продажи маркетплейса Getgems: TonAPI отдаёт sale-объекты
+            # ВСЕХ маркетов, включая мертвые контракты сторонних площадок
+            # («Marketapp Marketplace» висел с февраля с проваленными
+            # попытками покупки) — они выглядели «сделкой -95%», а купить
+            # нельзя, и на Getgems по нашей ссылке пусто.
+            market_name = str((sale.get("market") or {}).get("name") or "").lower()
+            if "getgems" not in market_name:
+                ghost_skipped += 1
                 continue
             price_info = sale.get("price") or {}
             try:
@@ -1177,19 +1232,95 @@ class MarketAPI:
                     symbol=traits["symbol"],
                 )
             )
+        if ghost_skipped:
+            logger.info(
+                "TonAPI parse %s: %d non-getgems sale(s) skipped (ghost/broken contracts)",
+                gift_name,
+                ghost_skipped,
+            )
         if lots:
+            # Флор Getgems из датасета — эталон; здесь его можно ТОЛЬКО
+            # понижать до реально увиденной цены продажи. Записывать минимум
+            # среза пагинации (первые 100-200 айтемов в порядке минта) как
+            # «флор» нельзя: срез пропускает дешевые лоты глубже по списку,
+            # и флор задирается (было: Ice Cream «18.80» при реальном 3.90) —
+            # честные лоты против такой дуты выглядели «-57%» и пушались.
             valid_prices = [lot.price for lot in lots if lot.price > 0]
             if valid_prices:
-                min_sale = min(valid_prices)
-                if gift_name in self._catalog:
-                    mf = dict(self._catalog[gift_name].get("market_floors") or {})
-                    mf["getgems"] = round(min_sale, 2)
-                    self._catalog[gift_name]["market_floors"] = mf
-                if self._floors_cache and gift_name in self._floors_cache:
-                    mf = dict(self._floors_cache[gift_name].get("market_floors") or {})
-                    mf["getgems"] = round(min_sale, 2)
-                    self._floors_cache[gift_name]["market_floors"] = mf
+                min_sale = round(min(valid_prices), 2)
+                for store in (self._catalog, self._floors_cache):
+                    info = store.get(gift_name) if store else None
+                    if not info:
+                        continue
+                    mf = dict(info.get("market_floors") or {})
+                    current = mf.get("getgems")
+                    if current is None or min_sale < float(current):
+                        mf["getgems"] = min_sale
+                        info["market_floors"] = mf
+            # Аски по моделям: лот за 7500 TON, висящий непроданным, —
+            # рыночная правда об этой модели, а не «сделка -70%».
+            asks: dict[str, float] = {}
+            for lot in lots:
+                if lot.model and lot.price > 0:
+                    cur = asks.get(lot.model)
+                    if cur is None or lot.price < cur:
+                        asks[lot.model] = lot.price
+            if asks:
+                self._record_model_asks(gift_name, asks)
         return lots
+
+    def _record_model_asks(self, gift_name: str, asks: dict[str, float]) -> None:
+        """Запоминает минимальные увиденные аски по моделям (только вниз)."""
+        store = self._model_asks.setdefault(gift_name, {})
+        now = time.time()
+        changed = False
+        for model, price in asks.items():
+            entry = store.get(model)
+            if entry is None or price < float(entry.get("floor") or 0.0):
+                store[model] = {"floor": round(float(price), 2), "ts": now}
+                changed = True
+        if changed:
+            self._model_asks_dirty = True
+            self._save_model_asks()
+
+    def _observed_model_floor(self, gift_name: str, model: str) -> float | None:
+        """Минимальный увиденный краулером аск модели, пока запись свежая."""
+        entry = (self._model_asks.get(gift_name) or {}).get(model)
+        if not entry:
+            return None
+        if time.time() - float(entry.get("ts") or 0.0) > self.settings.MODEL_ASK_TTL_SEC:
+            return None
+        floor = float(entry.get("floor") or 0.0)
+        return floor if floor > 0 else None
+
+    def _load_model_asks(self) -> None:
+        path = Path(self.settings.MODEL_ASKS_FILE)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if isinstance(payload, dict):
+            for gift, models in payload.items():
+                if isinstance(models, dict):
+                    self._model_asks[str(gift)] = {
+                        str(model): info
+                        for model, info in models.items()
+                        if isinstance(info, dict) and float(info.get("floor") or 0.0) > 0
+                    }
+
+    def _save_model_asks(self) -> None:
+        path = Path(self.settings.MODEL_ASKS_FILE)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(
+                json.dumps(self._model_asks, ensure_ascii=False, indent=1),
+                encoding="utf-8",
+            )
+            tmp.replace(path)
+            self._model_asks_dirty = False
+        except OSError as exc:
+            logger.warning("Model asks cache write failed (%s)", exc)
 
     def reference_floor(self, gift_name: str, default: float) -> float:
         """Медиана текущих листингов как reference-floor для оценки дисконта."""
@@ -1429,22 +1560,33 @@ class MarketAPI:
 
         # Проверенные модели с реальным отдельным рынком
         if lot.model and lot.gift_name == "Plush Pepe":
+            # Эталон модели — датасет, но пониженный до реально увиденного
+            # краулером аска: «флор» датасета бывает зависшей хотелкой
+            # (Yellow Hug «25498» при висящем непроданным лоте за 7500).
+            model_floor = self._observed_model_floor(lot.gift_name, lot.model)
             prices = await self.get_trait_prices(lot.gift_name)
             if prices is not None:
-                model_floor = prices.models.get(lot.model)
-                if model_floor is not None and model_floor > base:
-                    cap = base * self.settings.TRAIT_FLOOR_MAX_RATIO
-                    if model_floor <= cap:
-                        reference = round(float(model_floor), 2)
-                        basis = f"model:{lot.model}"
-                    else:
-                        logger.warning(
-                            "Model floor for %s/%s (%.1f TON) is %.1fx above collection floor — capped",
-                            lot.gift_name,
-                            lot.model,
-                            model_floor,
-                            model_floor / base,
-                        )
+                dataset_floor = prices.models.get(lot.model)
+                if dataset_floor is not None:
+                    dataset_floor = float(dataset_floor)
+                    model_floor = (
+                        dataset_floor
+                        if model_floor is None
+                        else min(model_floor, dataset_floor)
+                    )
+            if model_floor is not None and model_floor > base:
+                cap = base * self.settings.TRAIT_FLOOR_MAX_RATIO
+                if model_floor <= cap:
+                    reference = round(model_floor, 2)
+                    basis = f"model:{lot.model}"
+                else:
+                    logger.warning(
+                        "Model floor for %s/%s (%.1f TON) is %.1fx above collection floor — capped",
+                        lot.gift_name,
+                        lot.model,
+                        model_floor,
+                        model_floor / base,
+                    )
 
         # Эталон может быть еще выше: топ-бида автобая MRKT — покупатель уже
         # стоит с деньгами и готов забрать подарок этой коллекции. Лот дешевле

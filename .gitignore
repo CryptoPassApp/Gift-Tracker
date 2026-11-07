@@ -1,6 +1,7 @@
 # Секреты и локальные данные — не коммитить
 .env
 .env.local
+license.key
 data/
 backups/
 *.db

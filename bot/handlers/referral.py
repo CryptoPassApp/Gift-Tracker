@@ -1,9 +1,19 @@
 """/ref — реферальная программа: ссылка, статистика, награды.
 
-Награда: пригласивший получает +REFERRAL_REWARD_PCT% от подписки
-приглашенного днями PRO (30 дн. * 15% = 5 дней за оплаченный месяц).
-Начисление срабатывает на оплату Stars и крипту, идемпотентно
-(уникальный payment_ref) — см. database.award_referral.
+Ссылка строится из персонального случайного кода (database.ensure_referral_code),
+а НЕ из telegram_id — шарить можно, не светя свой айди. Старые ссылки
+``ref_<tg_id>`` продолжают работать (database.resolve_referral).
+
+Награды (обе начисляются пригласившему автоматически):
+1. За факт приглашения — +REFERRAL_INVITE_HOURS часов PRO сразу после
+   того, как друг запустил бота по ссылке (database.award_referral_invite,
+   идемпотентно через payment_ref="invite:<id>").
+2. За оплату — +REFERRAL_REWARD_PCT% от подписки приглашенного днями PRO
+   (30 дн. * 15% = 5 дней за оплаченный месяц; Stars и крипта,
+   уникальный payment_ref — см. database.award_referral).
+
+Про эти награды пишем ТОЛЬКО здесь, на экране /ref (и вложенном
+«как это работает») — в приветствии, /help и профиле бота их нет.
 
 Экран редактирует текущее сообщение (как все экраны бота).
 """
@@ -18,7 +28,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import get_settings
-from bot.database import referral_stats
+from bot.database import ensure_referral_code, referral_stats
 from bot.handlers.ui import edit_screen
 from bot.keyboards import back_to_menu_kb, referral_kb
 from bot.models import User
@@ -28,25 +38,37 @@ logger = logging.getLogger(__name__)
 router = Router(name="referral")
 
 
-def _referral_url(bot_username: str, telegram_id: int) -> str:
-    """Deep-link ``/start ref_<tg_id>`` — в exactly том виде, что парсит start.py."""
-    return f"https://t.me/{bot_username}?start=ref_{telegram_id}"
+def _referral_url(bot_username: str, payload: str) -> str:
+    """Deep-link ``/start ref_<payload>`` — персональный код или (легаси) tg_id."""
+    return f"https://t.me/{bot_username}?start=ref_{payload}"
 
 
-def _text(link: str, invited: int, earned_days: float, reward_days: float) -> str:
+def _fmt_earned(days: float) -> str:
+    """Человекочитаемая сумма наград: ``5.0417`` -> «5 дн. 1 ч», ``0.125`` -> «3 ч»."""
+    total_hours = round(days * 24)
+    d, h = divmod(int(total_hours), 24)
+    if d and h:
+        return f"{d} дн. {h} ч"
+    if d:
+        return f"{d} дн."
+    return f"{h} ч"
+
+
+def _text(link: str, invited: int, earned_str: str, reward_days: float, invite_hours: float) -> str:
     return (
         "🤝 <b>Реферальная система</b>\n"
         "\n"
-        "Приглашай друзей — получай дни PRO с их подписок.\n"
-        f"Каждый оплаченный месяц друга = <b>+{reward_days:g} дней</b> тебе, "
+        f"🎁 За каждого друга, который запустит бота по твоей ссылке, — "
+        f"<b>+{invite_hours:g} ч PRO</b> сразу.\n"
+        f"💎 Каждый оплаченный месяц друга = <b>+{reward_days:g} дней</b> тебе, "
         "начисляется автоматически в момент оплаты.\n"
         "\n"
         f"<b>Твоя ссылка:</b>\n<code>{link}</code>\n"
         "\n"
         f"👥 <b>Приглашено:</b> {invited}\n"
-        f"🏆 <b>Заработано:</b> {earned_days:g} дн. PRO\n"
+        f"🏆 <b>Заработано:</b> {earned_str}\n"
         "\n"
-        "Дни суммируются с текущей подпиской — ничего подтверждать не нужно."
+        "Часы и дни суммируются с текущей подпиской — ничего подтверждать не нужно."
     )
 
 
@@ -62,11 +84,14 @@ async def _show_referral(
     except Exception:  # noqa: BLE001 — фолбэк на известный username
         bot_username = "GiftTracker_App"
 
-    link = _referral_url(bot_username, db_user.telegram_id)
+    code = await ensure_referral_code(session, db_user)
+    link = _referral_url(bot_username, code or str(db_user.telegram_id))
     invited, earned = await referral_stats(session, db_user)
     reward_days = float(ceil(settings.PRO_MONTH_DAYS * settings.REFERRAL_REWARD_PCT / 100))
 
-    text = _text(link, invited, earned, reward_days)
+    text = _text(
+        link, invited, _fmt_earned(earned), reward_days, float(settings.REFERRAL_INVITE_HOURS)
+    )
     if isinstance(target, CallbackQuery):
         await edit_screen(target, text, referral_kb(link, settings.MINI_APP_URL))
     else:
@@ -98,12 +123,14 @@ async def cb_referral_how(callback: CallbackQuery) -> None:
         "🤝 <b>Как работает рефералка</b>\n"
         "\n"
         f"1️⃣ Делишься своей ссылкой (кнопка «Поделиться»).\n"
-        "2️⃣ Друг жмет /start по ней — он закреплен за тобой навсегда.\n"
+        f"2️⃣ Друг жмет /start по ней — он закреплен за тобой навсегда, "
+        f"а тебе сразу <b>+{settings.REFERRAL_INVITE_HOURS:g} ч PRO</b>.\n"
         f"3️⃣ Он оплачивает PRO (Stars или крипта) — тебе мгновенно начисляется "
         f"<b>+{settings.REFERRAL_REWARD_PCT}% от месяца</b> днями PRO.\n"
         "\n"
-        "Начисление автоматическое и зашищено от накрутки: один платеж = одна "
-        "награда, самореферал и повторные привязки не работают."
+        "Начисление автоматическое и защищено от накрутки: один друг = один "
+        "час, один платеж = одна награда, самореферал и повторные привязки "
+        "не работают."
     )
     await edit_screen(callback, text, back_to_menu_kb())
     await callback.answer()
