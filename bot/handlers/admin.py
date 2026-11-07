@@ -47,7 +47,7 @@ def _is_admin(telegram_id: int) -> bool:
 _GRANT_USAGE = (
     "👤 <b>Ручная выдача PRO</b>\n"
     "Формат: <code>/grant &lt;telegram_id&gt; &lt;month|lifetime&gt;</code>\n"
-    "Пример: <code>/grant 1419114126 month</code>\n"
+    "Пример: <code>/grant 123456789 month</code>\n"
     "Если пользователь еще не писал боту, запись будет создана автоматически."
 )
 

@@ -3,6 +3,7 @@ aiogram>=3.13,<4
 fastapi>=0.115
 uvicorn[standard]>=0.30
 SQLAlchemy>=2.0.35
+greenlet>=3.0        # нужен SQLAlchemy[asyncio] (на Linux не ставится сам)
 aiosqlite>=0.20
 pydantic>=2.7
 pydantic-settings>=2.4
