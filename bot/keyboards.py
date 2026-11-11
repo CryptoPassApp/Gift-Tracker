@@ -225,18 +225,6 @@ def admin_reply_kb(ticket_id: int) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def admin_ticket_relay_kb(ticket_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура на пересланном сообщении пользователя админам."""
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text=f"↩️ Ответить · #{ticket_id}", callback_data=f"supadm:reply:{ticket_id}")
-    )
-    builder.row(
-        InlineKeyboardButton(text="✕ Завершить диалог", callback_data=f"supadm:close:{ticket_id}")
-    )
-    return builder.as_markup()
-
-
 DISCOUNT_THRESHOLD_OPTIONS = (0, 15, 20, 25, 30, 40)
 
 
@@ -279,6 +267,5 @@ __all__ = [
     "support_open_kb",
     "admin_support_dialog_kb",
     "admin_reply_kb",
-    "admin_ticket_relay_kb",
     "DISCOUNT_THRESHOLD_OPTIONS",
 ]

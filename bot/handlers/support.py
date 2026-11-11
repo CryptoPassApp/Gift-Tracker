@@ -1,17 +1,16 @@
 """Тех-поддержка внутри бота: диалог юзера с админом без внешних ссылок.
 
 Юзер жмет «Написать в поддержку», пишет сообщение — оно сохраняется в
-тикет и пересылается всем ADMIN_IDS с кнопками «Ответить»/«Завершить».
-Админ отвечает прямо из своего чата (FSM), ответ уходит юзеру в тот же
-чат. В админке раздел «Сообщения от людей»: список открытых диалогов
-(id + ник), просмотр истории, ответ конкретному человеку, завершение.
+тикет в БД. В личный чат админа ничего не шлется: все обращения админ
+читает в админке, раздел «Сообщения от людей» — кнопки-диалоги
+(#id · ник, 5 на страницу со стрелками), история, ответ конкретному
+человеку (FSM), завершение диалога.
 
 FSM-перехватчики пропускают команды (``~F.text.startswith("/")``),
 поэтому /start, /grant и т.д. работают даже в режиме чата.
 """
 from __future__ import annotations
 
-import html
 import logging
 from datetime import datetime
 
@@ -29,7 +28,6 @@ from bot.keyboards import (
     admin_panel_kb,
     admin_reply_kb,
     admin_support_dialog_kb,
-    admin_ticket_relay_kb,
     back_to_menu_kb,
     support_kb,
     support_open_kb,
@@ -42,7 +40,7 @@ logger = logging.getLogger(__name__)
 router = Router(name="support")
 
 # Диалогов на одной странице экрана «Сообщения от людей».
-SUP_PAGE_SIZE = 8
+SUP_PAGE_SIZE = 5
 # Сообщений истории на экране диалога.
 SUP_HISTORY_LIMIT = 6
 # Лимит текста одного сообщения поддержки (запас под заголовок Telegram).
@@ -145,24 +143,6 @@ async def _ticket_with_user(
     return row
 
 
-def _relay_header(ticket: SupportTicket, db_user: User) -> str:
-    return f"🎫 <b>Диалог #{ticket.id}</b> · {_full_who(db_user)}\n\n"
-
-
-async def _notify_admins(
-    bot: Bot,
-    session: AsyncSession,
-    text: str,
-    kb: InlineKeyboardMarkup | None = None,
-) -> None:
-    """Шлет служебное сообщение всем админам (ошибки доставки не критичны)."""
-    for admin_id in get_settings().ADMIN_IDS:
-        try:
-            await bot.send_message(admin_id, text, reply_markup=kb)
-        except Exception:  # noqa: BLE001 — админ мог заблокировать бота
-            logger.warning("Support notify failed for admin %s", admin_id, exc_info=True)
-
-
 # ----------------------------------------------------------------------
 # Юзерская сторона: экран, режим чата, завершение
 # ----------------------------------------------------------------------
@@ -229,11 +209,6 @@ async def cb_support_close(
         reply_markup=back_to_menu_kb(),
     )
     await callback.answer()
-    await _notify_admins(
-        callback.bot,
-        session,
-        f"🔇 {_full_who(db_user)} закрыл диалог #{ticket.id}.",
-    )
     logger.info("Support ticket #%s closed by user %s", ticket.id, db_user.telegram_id)
 
 
@@ -243,9 +218,12 @@ async def process_user_support(
     state: FSMContext,
     session: AsyncSession,
     db_user: User,
-    bot: Bot,
 ) -> None:
-    """Сообщение юзера в режиме чата: сохранить в тикет и переслать админам."""
+    """Сообщение юзера в режиме чата: сохранить в тикет.
+
+    В личный чат админа ничего не шлется — обращения читаются в админке
+    («Сообщения от людей», у экрана списка на кнопках счетчик новых).
+    """
     ticket = await _open_ticket(session, db_user.id)
     if ticket is None:
         ticket = SupportTicket(user_id=db_user.id)
@@ -259,38 +237,6 @@ async def process_user_support(
     ticket.updated_at = datetime.utcnow()
     await session.flush()
 
-    kb = admin_ticket_relay_kb(ticket.id)
-    header = _relay_header(ticket, db_user)
-    delivered = 0
-    for admin_id in get_settings().ADMIN_IDS:
-        try:
-            if message.text is not None:
-                await bot.send_message(
-                    admin_id,
-                    header + html.escape(message.text.strip(), quote=False)[:4096 - 128],
-                    reply_markup=kb,
-                )
-            else:
-                caption = None
-                if message.caption:
-                    caption = header.strip() + "\n" + html.escape(message.caption, quote=False)
-                    caption = caption[:1024]
-                await bot.copy_message(
-                    admin_id,
-                    from_chat_id=message.chat.id,
-                    message_id=message.message_id,
-                    caption=caption,
-                    reply_markup=kb,
-                )
-            delivered += 1
-        except Exception:  # noqa: BLE001 — один недоступный админ не ломает остальные
-            logger.warning(
-                "Support relay failed to admin %s (ticket #%s)",
-                admin_id,
-                ticket.id,
-                exc_info=True,
-            )
-
     await message.answer(
         "📨 <b>Отправлено в поддержку</b>\n"
         "Ответ придет прямо в этот чат. Пока диалог открыт — пиши дальше, "
@@ -298,17 +244,47 @@ async def process_user_support(
         reply_markup=support_open_kb(),
     )
     logger.info(
-        "Support ticket #%s: user %s sent message (%d/%d admins notified)",
-        ticket.id,
-        db_user.telegram_id,
-        delivered,
-        len(get_settings().ADMIN_IDS),
+        "Support ticket #%s: user %s sent message", ticket.id, db_user.telegram_id
     )
 
 
 # ----------------------------------------------------------------------
 # Админская сторона: список диалогов, история, ответ, завершение
 # ----------------------------------------------------------------------
+async def _unread_by_ticket(session: AsyncSession, ticket_ids: list[int]) -> dict[int, int]:
+    """Сколько сообщений юзера пришло после последнего ответа админа.
+
+    Ответов админа в тикете не было — считаются все сообщения юзера.
+    Считается по всем сообщениям тикетов (их немного — это чат поддержки).
+    """
+    if not ticket_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(SupportMessage.ticket_id, SupportMessage.from_admin)
+            .where(SupportMessage.ticket_id.in_(ticket_ids))
+            .order_by(SupportMessage.id)
+        )
+    ).all()
+    unread: dict[int, int] = {}
+    for ticket_id, from_admin in rows:
+        if from_admin:
+            unread[ticket_id] = 0
+        else:
+            unread[ticket_id] = unread.get(ticket_id, 0) + 1
+    return unread
+
+
+def _dialog_label(ticket: SupportTicket, user: User, unread: int) -> str:
+    """Кнопка-диалог в списке: #id · ник · id — и «+N» при новых сообщениях."""
+    label = f"#{ticket.id} · {_who(user)} · id {user.telegram_id}"
+    if unread:
+        label += f" · +{unread}"
+    else:
+        label += f" · {_ts(ticket.updated_at)}"
+    return label
+
+
 async def _render_admin_support(callback: CallbackQuery, session: AsyncSession, page: int) -> None:
     """Экран «Сообщения от людей»: список открытых диалогов."""
     from aiogram.types import InlineKeyboardButton
@@ -340,11 +316,12 @@ async def _render_admin_support(callback: CallbackQuery, session: AsyncSession, 
     pages = max(1, (len(rows) + SUP_PAGE_SIZE - 1) // SUP_PAGE_SIZE)
     page = max(0, min(page, pages - 1))
     window = rows[page * SUP_PAGE_SIZE:(page + 1) * SUP_PAGE_SIZE]
+    unread = await _unread_by_ticket(session, [ticket.id for ticket, _ in window])
 
     for ticket, user in window:
         builder.row(
             InlineKeyboardButton(
-                text=f"#{ticket.id} · {_who(user)} · {_ts(ticket.updated_at)}",
+                text=_dialog_label(ticket, user, unread.get(ticket.id, 0)),
                 callback_data=f"supadm:view:{ticket.id}",
             )
         )
@@ -356,10 +333,14 @@ async def _render_admin_support(callback: CallbackQuery, session: AsyncSession, 
         )
     builder.row(InlineKeyboardButton(text="« В админку", callback_data="admin:panel"))
 
+    new_total = sum(
+        unread.get(ticket.id, 0) for ticket, _ in window
+    )
     text = (
         f"💬 <b>Сообщения от людей</b>\n"
-        f"Открытых диалогов: <b>{total}</b>\n"
-        "\n"
+        f"Открытых диалогов: <b>{total}</b>"
+        + (f" · новых сообщений: <b>{new_total}</b>" if new_total else "")
+        + "\n\n"
         "Нажми на диалог — история и ответ конкретному человеку."
     )
     await edit_screen(callback, text, builder.as_markup())

@@ -1,7 +1,10 @@
-"""Чат тех-поддержки внутри бота: юзер -> тикет -> админ -> ответ -> закрытие."""
+"""Чат тех-поддержки внутри бота: тикеты в БД, чтение через админку.
+
+В личный чат админа ничего не шлется: список людей — кнопками в админке
+(5 на страницу + стрелки), у кнопки счетчик новых сообщений.
+"""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -48,9 +51,6 @@ class FakeMessage:
 
     async def answer(self, text: str, **kwargs) -> None:
         self.answers.append((text, kwargs or None))
-
-    async def _fake_copy(self, **kwargs) -> None:  # pragma: no cover — для медиа
-        self.copies.append(kwargs)
 
 
 def make_state(user_id: int, chat_id: int | None = None) -> FSMContext:
@@ -103,6 +103,24 @@ async def make_users(db) -> tuple[User, User]:
         return admin, user
 
 
+async def make_user(db, tg_id: int, username: str) -> User:
+    async with db.session() as session:
+        user = await get_or_create_user(session, {"id": tg_id, "username": username})
+        await session.flush()
+        user_id = user.id
+    async with db.session() as session:
+        return await session.get(User, user_id)
+
+
+async def write_ticket(db, user: User, text: str) -> None:
+    """Юзер пишет сообщение в поддержку (режим чата)."""
+    state = make_state(user.telegram_id)
+    async with db.session() as session:
+        await support_handler.process_user_support(
+            FakeMessage(text=text, chat_id=user.telegram_id), state, session, user
+        )
+
+
 async def load_tickets(db) -> list[SupportTicket]:
     async with db.session() as session:
         return list(
@@ -123,6 +141,10 @@ async def load_messages(db, ticket_id: int) -> list[SupportMessage]:
         )
 
 
+def _button_texts(markup) -> list[str]:
+    return [b.text for row in markup.inline_keyboard for b in row]
+
+
 @pytest.fixture()
 def support_settings(tmp_path):
     return make_settings(tmp_path, ADMIN_IDS=str(ADMIN_TG_ID))
@@ -135,16 +157,13 @@ def patched_settings(support_settings, monkeypatch):
 
 
 class TestUserFlow:
-    async def test_message_creates_ticket_and_relays_to_admin(self, db, patched_settings):
+    async def test_message_creates_ticket_nothing_in_admin_chat(self, db, patched_settings):
         admin, user = await make_users(db)
-        bot = RelayBot()
         message = FakeMessage(text="Пуши не приходят!", chat_id=USER_TG_ID)
         state = make_state(USER_TG_ID)
 
         async with db.session() as session:
-            await support_handler.process_user_support(
-                message, state, session, user, bot
-            )
+            await support_handler.process_user_support(message, state, session, user)
 
         tickets = await load_tickets(db)
         assert len(tickets) == 1
@@ -155,36 +174,13 @@ class TestUserFlow:
         assert saved[0].from_admin is False
         assert saved[0].text == "Пуши не приходят!"
 
-        # Сообщение продублировано админу с заголовком и кнопками ответа.
-        assert bot.sent and bot.sent[0][0] == ADMIN_TG_ID
-        assert "Диалог #1" in bot.sent[0][1]
-        assert "vasya" in bot.sent[0][1]
-        callbacks = [
-            b.callback_data for row in bot.markups[0].inline_keyboard for b in row
-        ]
-        assert "supadm:reply:1" in callbacks
-        assert "supadm:close:1" in callbacks
-
-        # Юзер получил подтверждение и кнопки продолжения диалога.
-        confirm_kb = message.answers[-1][1]["reply_markup"]
-        user_callbacks = [
-            b.callback_data for row in confirm_kb.inline_keyboard for b in row
-        ]
-        assert "support:write" in user_callbacks
-        assert "support:close" in user_callbacks
+        # Юзер получил подтверждение; в чат админа ничего не уходит.
+        assert message.answers and "Отправлено в поддержку" in message.answers[-1][0]
 
     async def test_second_message_appends_to_same_ticket(self, db, patched_settings):
-        admin, user = await make_users(db)
-        bot = FakeBot()
-        state = make_state(USER_TG_ID)
-
-        async with db.session() as session:
-            await support_handler.process_user_support(
-                FakeMessage(text="первое", chat_id=USER_TG_ID), state, session, user, bot
-            )
-            await support_handler.process_user_support(
-                FakeMessage(text="второе", chat_id=USER_TG_ID), state, session, user, bot
-            )
+        _admin, user = await make_users(db)
+        await write_ticket(db, user, "первое")
+        await write_ticket(db, user, "второе")
 
         tickets = await load_tickets(db)
         assert len(tickets) == 1
@@ -192,61 +188,43 @@ class TestUserFlow:
         assert [m.text for m in saved] == ["первое", "второе"]
 
     async def test_closed_ticket_reopens_as_new(self, db, patched_settings):
-        admin, user = await make_users(db)
-        bot = FakeBot()
-        state = make_state(USER_TG_ID)
+        _admin, user = await make_users(db)
+        await write_ticket(db, user, "раз")
 
+        state = make_state(USER_TG_ID)
         async with db.session() as session:
-            await support_handler.process_user_support(
-                FakeMessage(text="раз", chat_id=USER_TG_ID), state, session, user, bot
-            )
             await support_handler.cb_support_close(
                 FakeCallback("support:close"), state, session, user
             )
-        async with db.session() as session:
-            await support_handler.process_user_support(
-                FakeMessage(text="два", chat_id=USER_TG_ID), state, session, user, bot
-            )
+        await write_ticket(db, user, "два")
 
         tickets = await load_tickets(db)
         assert [t.status for t in tickets] == ["closed", "open"]
 
-    async def test_user_close_notifies_admin(self, db, patched_settings):
-        admin, user = await make_users(db)
-        bot = RelayBot()
-        state = make_state(USER_TG_ID)
+    async def test_user_close_marks_ticket_closed(self, db, patched_settings):
+        _admin, user = await make_users(db)
+        await write_ticket(db, user, "помогите")
 
+        state = make_state(USER_TG_ID)
         async with db.session() as session:
-            await support_handler.process_user_support(
-                FakeMessage(text="помогите", chat_id=USER_TG_ID), state, session, user, bot
-            )
-            bot.sent.clear()
-            bot.markups.clear()
             await support_handler.cb_support_close(
-                FakeCallback("support:close", bot=bot), state, session, user
+                FakeCallback("support:close"), state, session, user
             )
 
         tickets = await load_tickets(db)
         assert tickets[0].status == "closed"
-        assert any("закрыл диалог" in text for _, text in bot.sent)
 
 
 class TestAdminFlow:
     async def test_reply_delivered_and_saved(self, db, patched_settings):
         admin, user = await make_users(db)
         bot = RelayBot()
-        user_state = make_state(USER_TG_ID)
         admin_state = make_state(ADMIN_TG_ID)
 
+        await write_ticket(db, user, "что с пушами?")
+
         async with db.session() as session:
-            await support_handler.process_user_support(
-                FakeMessage(text="что с пушами?", chat_id=USER_TG_ID),
-                user_state,
-                session,
-                user,
-                bot,
-            )
-            # Админ жмет «Ответить» на пересланном сообщении.
+            # Админ жмет «Ответить» на экране диалога.
             await support_handler.cb_admin_reply_start(
                 FakeCallback("supadm:reply:1", bot=bot), admin_state, session, admin
             )
@@ -260,27 +238,25 @@ class TestAdminFlow:
                 bot,
             )
 
-        tickets = await load_tickets(db)
-        saved = await load_messages(db, tickets[0].id)
+        saved = await load_messages(db, 1)
         assert saved[-1].from_admin is True
         assert "чиним" in saved[-1].text
 
-        # Юзеру ушел ответ с заголовком и кнопками продолжения.
+        # Юзеру ушел ответ с заголовком.
+        assert any(chat == USER_TG_ID for chat, _ in bot.sent)
         to_user = next(text for chat, text in bot.sent if chat == USER_TG_ID)
         assert "Ответ тех-поддержки" in to_user
 
     async def test_reply_to_closed_ticket_blocked(self, db, patched_settings):
         admin, user = await make_users(db)
         bot = RelayBot()
-        user_state = make_state(USER_TG_ID)
         admin_state = make_state(ADMIN_TG_ID)
 
+        await write_ticket(db, user, "ау")
+        state = make_state(USER_TG_ID)
         async with db.session() as session:
-            await support_handler.process_user_support(
-                FakeMessage(text="ау", chat_id=USER_TG_ID), user_state, session, user, bot
-            )
             await support_handler.cb_support_close(
-                FakeCallback("support:close", bot=bot), user_state, session, user
+                FakeCallback("support:close"), state, session, user
             )
             await support_handler.cb_admin_reply_start(
                 FakeCallback("supadm:reply:1", bot=bot), admin_state, session, admin
@@ -300,15 +276,10 @@ class TestAdminFlow:
     async def test_admin_close_notifies_user(self, db, patched_settings):
         admin, user = await make_users(db)
         bot = RelayBot()
-        user_state = make_state(USER_TG_ID)
-
-        async with db.session() as session:
-            await support_handler.process_user_support(
-                FakeMessage(text="привет", chat_id=USER_TG_ID), user_state, session, user, bot
-            )
-
-        bot.sent.clear()
         admin_state = make_state(ADMIN_TG_ID)
+
+        await write_ticket(db, user, "привет")
+
         async with db.session() as session:
             await support_handler.cb_admin_close_ticket(
                 FakeCallback("supadm:close:1", bot=bot), admin_state, session, admin
@@ -320,16 +291,13 @@ class TestAdminFlow:
 
     async def test_admin_close_is_idempotent(self, db, patched_settings):
         admin, user = await make_users(db)
-        user_state = make_state(USER_TG_ID)
         admin_state = make_state(ADMIN_TG_ID)
 
-        async with db.session() as session:
-            await support_handler.process_user_support(
-                FakeMessage(text="привет", chat_id=USER_TG_ID), user_state, session, user, FakeBot()
-            )
+        await write_ticket(db, user, "привет")
+
         async with db.session() as session:
             await support_handler.cb_admin_close_ticket(
-                FakeCallback("supadm:close:1"), admin_state, session, admin
+                FakeCallback("supadm:close:1", bot=RelayBot()), admin_state, session, admin
             )
         callback = FakeCallback("supadm:close:1")
         async with db.session() as session:
@@ -340,16 +308,10 @@ class TestAdminFlow:
 
 
 class TestAdminScreens:
-    async def test_dialogs_screen_lists_open_tickets(self, db, patched_settings):
+    async def test_dialogs_screen_lists_tickets_with_unread(self, db, patched_settings):
         admin, user = await make_users(db)
-        async with db.session() as session:
-            await support_handler.process_user_support(
-                FakeMessage(text="вопрос про оплату", chat_id=USER_TG_ID),
-                make_state(USER_TG_ID),
-                session,
-                user,
-                FakeBot(),
-            )
+        await write_ticket(db, user, "вопрос про оплату")
+        await write_ticket(db, user, "и еще один вопрос")
 
         callback = FakeCallback("admin:support")
         async with db.session() as session:
@@ -358,9 +320,40 @@ class TestAdminScreens:
         text, markup = callback.edits[-1]
         assert "Сообщения от людей" in text
         assert "Открытых диалогов: <b>1</b>" in text
-        buttons = [b for row in markup.inline_keyboard for b in row]
-        assert any("#1 · @vasya" in b.text for b in buttons)
-        assert any(b.callback_data == "supadm:view:1" for b in buttons)
+        assert "новых сообщений: <b>2</b>" in text
+        labels = _button_texts(markup)
+        # Кнопка: #id · ник · id юзера · +непрочитанные.
+        assert any("#1 · @vasya · id 800200 · +2" in t for t in labels)
+        assert any(b.callback_data == "supadm:view:1" for row in markup.inline_keyboard for b in row)
+
+    async def test_unread_resets_after_admin_reply(self, db, patched_settings):
+        admin, user = await make_users(db)
+        bot = RelayBot()
+        admin_state = make_state(ADMIN_TG_ID)
+
+        await write_ticket(db, user, "первый вопрос")
+        await write_ticket(db, user, "второй")
+
+        async with db.session() as session:
+            await support_handler.cb_admin_reply_start(
+                FakeCallback("supadm:reply:1", bot=bot), admin_state, session, admin
+            )
+            await support_handler.process_admin_reply(
+                FakeMessage(text="ок, смотрю", chat_id=ADMIN_TG_ID, bot=bot),
+                admin_state,
+                session,
+                admin,
+                bot,
+            )
+        await write_ticket(db, user, "спасибо!")
+
+        callback = FakeCallback("admin:support")
+        async with db.session() as session:
+            await support_handler.cb_admin_support(callback, session, admin)
+
+        text, markup = callback.edits[-1]
+        assert "новых сообщений: <b>1</b>" in text
+        assert any("#1 · @vasya · id 800200 · +1" in t for t in _button_texts(markup))
 
     async def test_dialogs_screen_empty(self, db, patched_settings):
         admin, _user = await make_users(db)
@@ -370,20 +363,49 @@ class TestAdminScreens:
         text, _markup = callback.edits[-1]
         assert "Открытых диалогов нет" in text
 
+    async def test_pagination_five_per_page_with_arrows(self, db, patched_settings):
+        admin, user = await make_users(db)
+        await write_ticket(db, user, "текущий")
+        for i in range(1, 8):  # 7 старых диалогов: всего 8
+            extra = await make_user(db, 800_300 + i, f"user{i}")
+            await write_ticket(db, extra, f"вопрос {i}")
+
+        # Страница 0: 5 кнопок-диалогов + стрелки.
+        callback = FakeCallback("admin:support")
+        async with db.session() as session:
+            await support_handler.cb_admin_support(callback, session, admin)
+        text, markup = callback.edits[-1]
+        assert "Открытых диалогов: <b>8</b>" in text
+        dialogs = [t for t in _button_texts(markup) if t.startswith("#")]
+        assert len(dialogs) == 5
+        labels = _button_texts(markup)
+        assert "◀" in labels and "▶" in labels and "1/2" in labels
+
+        # Стрелка вперед: страница 2 — оставшиеся 3 диалога, назад можно.
+        callback2 = FakeCallback("supadm:list:1")
+        async with db.session() as session:
+            await support_handler.cb_admin_support_page(callback2, session, admin)
+        text2, markup2 = callback2.edits[-1]
+        dialogs2 = [t for t in _button_texts(markup2) if t.startswith("#")]
+        assert len(dialogs2) == 3
+        assert "◀" in _button_texts(markup2) and "2/2" in _button_texts(markup2)
+
+        # Стрелка назад со второй страницы: снова страница 1.
+        callback3 = FakeCallback("supadm:list:0")
+        async with db.session() as session:
+            await support_handler.cb_admin_support_page(callback3, session, admin)
+        dialogs3 = [
+            t for t in _button_texts(callback3.edits[-1][1]) if t.startswith("#")
+        ]
+        assert len(dialogs3) == 5
+
     async def test_view_shows_history_both_sides(self, db, patched_settings):
         admin, user = await make_users(db)
-        bot = FakeBot()
-        user_state = make_state(USER_TG_ID)
+        bot = RelayBot()
         admin_state = make_state(ADMIN_TG_ID)
 
+        await write_ticket(db, user, "пропала сделка")
         async with db.session() as session:
-            await support_handler.process_user_support(
-                FakeMessage(text="пропала сделка", chat_id=USER_TG_ID),
-                user_state,
-                session,
-                user,
-                bot,
-            )
             await support_handler.cb_admin_reply_start(
                 FakeCallback("supadm:reply:1", bot=bot), admin_state, session, admin
             )
@@ -402,9 +424,10 @@ class TestAdminScreens:
         text, markup = callback.edits[-1]
         assert "пропала сделка" in text
         assert "проверяем ленту" in text
-        buttons = [b for row in markup.inline_keyboard for b in row]
-        assert any(b.callback_data == "supadm:reply:1" for b in buttons)
-        assert any(b.callback_data == "supadm:close:1" for b in buttons)
+        callbacks = [b.callback_data for row in markup.inline_keyboard for b in row]
+        assert "supadm:reply:1" in callbacks
+        assert "supadm:close:1" in callbacks
+        assert "admin:support" in callbacks  # « К диалогам»
 
     async def test_panel_badge_counts_open_dialogs(self, db, patched_settings):
         admin, user = await make_users(db)
@@ -413,13 +436,8 @@ class TestAdminScreens:
             labels = [b.text for row in kb.inline_keyboard for b in row]
             assert all("Сообщения от людей" not in t or "·" not in t for t in labels)
 
-            await support_handler.process_user_support(
-                FakeMessage(text="снова я", chat_id=USER_TG_ID),
-                make_state(USER_TG_ID),
-                session,
-                user,
-                FakeBot(),
-            )
+        await write_ticket(db, user, "снова я")
+        async with db.session() as session:
             kb = await support_handler.admin_panel_with_badge(session)
             labels = [b.text for row in kb.inline_keyboard for b in row]
             assert any("Сообщения от людей · 1" in t for t in labels)
