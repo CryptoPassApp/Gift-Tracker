@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from aiogram import Bot
@@ -37,6 +38,7 @@ MARKET_LABELS: dict[str, str] = {
     "tonnel": "Tonnel",
     "mrkt": "MRKT",
     "tgmrkt": "MRKT",
+    "fragment": "Fragment",
 }
 
 TELEGRAM_GIFT_URL_BASE = "https://t.me/nft/"
@@ -103,9 +105,30 @@ def _floor_line(signal: Signal) -> str:
     return f"📉 Флор коллекции: <b>{signal.floor_price:g} TON</b>"
 
 
+def _auction_time_left(signal: Signal) -> str | None:
+    """«до конца 17 ч 34 мин» по времени конца аукциона; None — нет данных."""
+    ts = getattr(signal, "auction_end_ts", None)
+    if not ts:
+        return None
+    left = float(ts) - datetime.now().timestamp()
+    if left <= 0:
+        return None
+    hours, minutes = int(left // 3600), int((left % 3600) // 60)
+    if hours >= 24:
+        return f"до конца {hours // 24} д {hours % 24} ч"
+    if hours > 0:
+        return f"до конца {hours} ч {minutes:02d} мин"
+    return f"до конца {max(minutes, 1)} мин"
+
+
 def _signal_caption(signal: Signal) -> str:
     """Подпись под фото лота (стиль маркет-парсеров)."""
-    header = "🔥 HOT LIQUIDATION" if signal.is_hot else "⚡ Снайп-сигнал"
+    if signal.is_auction:
+        header = "🔨 HOT АУКЦИОН" if signal.is_hot else "🔨 Аукцион ниже флора"
+        price_line = f"🔨 Текущая ставка: <b>{signal.deal_price:.2f} TON</b> · {market_label(signal.source)}"
+    else:
+        header = "🔥 HOT LIQUIDATION" if signal.is_hot else "⚡ Снайп-сигнал"
+        price_line = f"💰 <b>{signal.deal_price:.2f} TON</b> · {market_label(signal.source)}"
     parts = [
         f"{header} · <b>−{abs(signal.discount_pct):g}% от флора</b>",
         f"🎁 <b>{_signal_title(signal)}</b>",
@@ -115,10 +138,17 @@ def _signal_caption(signal: Signal) -> str:
         parts.append(traits)
     parts += [
         "",
-        f"💰 <b>{signal.deal_price:.2f} TON</b> · {market_label(signal.source)}",
+        price_line,
         _floor_line(signal),
         f"💸 Профит после комиссий: <b>{signal.net_profit_ton:+.2f} TON</b>",
     ]
+    time_left = _auction_time_left(signal)
+    if time_left:
+        parts.append(f"⏳ {time_left}")
+    # Честное предупреждение: ставки на Fragment идут только с верифицированным
+    # аккаунтом (KYC там остался для подарков — убрали только для Stars/Premium).
+    if signal.is_auction and (signal.source or "").lower() == "fragment":
+        parts.append("⚠️ Для ставки нужен верифицированный Fragment")
     return "\n".join(parts)
 
 
@@ -147,12 +177,16 @@ def _snipe_keyboard(
 ) -> InlineKeyboardMarkup:
     """Кнопки под фото: покупка на маркете, подарок в Telegram, терминал."""
     preposition = "в" if (signal.source or "").lower() == "portals" else "на"
+    if signal.is_auction:
+        action_text = f"🔨 Ставить на {market_label(signal.source)}"
+    else:
+        action_text = (
+            f"🛒 Купить {preposition} {market_label(signal.source)} · "
+            f"{signal.deal_price:.2f} TON"
+        )
     rows = [[
         InlineKeyboardButton(
-            text=(
-                f"🛒 Купить {preposition} {market_label(signal.source)} · "
-                f"{signal.deal_price:.2f} TON"
-            ),
+            text=action_text,
             url=signal.marketplace_url,
         )
     ]]

@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     # поэтому не долбим API каждые 5 секунд, а ждём.
     TONAPI_COOLDOWN_ON_429_SEC: float = 600.0
 
+    # ---------- Аукционы Fragment ----------
+    # Страница коллекции filter=auction читается серверно (браузерный UA);
+    # за один проход скрейпим N слагов, курсор двигается по кругу.
+    FRAGMENT_SCAN_PER_PASS: int = Field(default=6, ge=1, le=60)
+    FRAGMENT_LISTINGS_TTL_SEC: float = 120.0
+
     # ---------- Адреса коллекций ----------
     # Публичный реестр Tonkeeper: address + name для 115 из 123 gift-коллекций.
     # Ключ не нужен, поэтому адреса не зависят от лимитов TonAPI.

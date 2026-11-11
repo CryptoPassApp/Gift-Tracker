@@ -54,19 +54,26 @@ class CryptoPayClient:
         await self._client.aclose()
 
     async def _call(self, method: str, **params: Any) -> Any:
-        try:
-            resp = await self._client.post(
-                f"{self._api_base}/{method}", json=params, headers=self._headers
-            )
-        except httpx.HTTPError as exc:
-            raise CryptoPayError(f"{method}: {exc}") from exc
-        try:
-            data = resp.json()
-        except ValueError as exc:
-            raise CryptoPayError(f"{method}: non-JSON response") from exc
-        if resp.status_code != 200 or not isinstance(data, dict) or not data.get("ok"):
-            raise CryptoPayError(f"{method}: HTTP {resp.status_code} {str(data)[:200]}")
-        return data.get("result")
+        for attempt in (1, 2):
+            try:
+                resp = await self._client.post(
+                    f"{self._api_base}/{method}", json=params, headers=self._headers
+                )
+            except httpx.HTTPError as exc:
+                raise CryptoPayError(f"{method}: {exc}") from exc
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                # Cloudflare/прокси изредка отдаёт HTML-ошибку вместо JSON —
+                # один ретрай, второй раз подряд не выдаём synced-фейл.
+                if attempt == 2:
+                    raise CryptoPayError(f"{method}: non-JSON response") from exc
+                await asyncio.sleep(2)
+                continue
+            if resp.status_code != 200 or not isinstance(data, dict) or not data.get("ok"):
+                raise CryptoPayError(f"{method}: HTTP {resp.status_code} {str(data)[:200]}")
+            return data.get("result")
+        raise CryptoPayError(f"{method}: unreachable")
 
     async def create_invoice(
         self, asset: str, amount: float, payload: str, description: str

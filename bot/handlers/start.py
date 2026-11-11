@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.config import get_settings
 from bot.database import award_referral_invite, resolve_referral
 from bot.handlers.ui import edit_screen
-from bot.keyboards import back_to_menu_kb, main_menu_kb, support_kb
+from bot.keyboards import back_to_menu_kb, main_menu_kb
 from bot.models import User
 
 router = Router(name="start")
@@ -127,30 +127,6 @@ async def cb_noop(callback: CallbackQuery) -> None:
 async def cb_how_it_works(callback: CallbackQuery) -> None:
     """Кнопка «Как это работает» — экран с возвратом в меню."""
     await edit_screen(callback, HOW_IT_WORKS_TEXT, back_to_menu_kb())
-    await callback.answer()
-
-
-SUPPORT_TEXT = (
-    "🛠 <b>Тех-поддержка</b>\n"
-    "\n"
-    "Есть вопрос или проблема?\n"
-    "• Не приходит пуш / пропала сделка\n"
-    "• Оплата Stars или криптой\n"
-    "• Реферальные начисления\n"
-    "\n"
-    "Напиши нам — отвечаем по мере поступления."
-)
-
-
-@router.callback_query(F.data == "menu:support")
-async def cb_support(callback: CallbackQuery) -> None:
-    """Кнопка «Тех-поддержка» — экран с переходом в саппорт-чат."""
-    settings = get_settings()
-    await edit_screen(
-        callback,
-        SUPPORT_TEXT,
-        support_kb(settings.SUPPORT_URL),
-    )
     await callback.answer()
 
 

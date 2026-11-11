@@ -25,7 +25,7 @@ from aiogram.types import BotCommand
 
 from bot.config import get_settings
 from bot.database import Database
-from bot.handlers import admin, alerts, referral, start, subscription
+from bot.handlers import admin, alerts, referral, start, subscription, support
 from bot.licensing import LicenseError, ensure_licensed
 from bot.logging_setup import configure_logging
 from bot.middleware import AuthMiddleware
@@ -199,6 +199,7 @@ async def main() -> None:
         referral.router,
         alerts.router,
         admin.router,
+        support.router,
     )
 
     dispatcher.startup.register(on_startup)

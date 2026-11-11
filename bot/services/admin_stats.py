@@ -119,10 +119,62 @@ async def grant_pro(
     return user
 
 
+async def grant_pro_days(
+    session: AsyncSession,
+    telegram_id: int,
+    days: float,
+) -> User:
+    """Выдает PRO на произвольный срок в днях (дробные = часы: 0.5 = 12ч).
+
+    Продление суммируется с активной подпиской (та же математика, что у
+    ``activate_pro``); lifetime поверх дней не теряется — база отсчета
+    берется от конца активной подписки.
+
+    Raises:
+        ValueError: некорректный telegram_id или неположительный срок.
+    """
+    if telegram_id <= 0:
+        raise ValueError("telegram_id must be positive")
+    days = float(days)
+    if days <= 0:
+        raise ValueError("days must be positive")
+    user = await get_or_create_user(session, {"id": telegram_id})
+    await activate_pro(session, user, "pro_month", month_days=days)
+    await session.flush()
+    return user
+
+
+async def revoke_pro(
+    session: AsyncSession,
+    telegram_id: int,
+) -> tuple[User, datetime | None]:
+    """Отзывает PRO у пользователя (в том числе lifetime).
+
+    Возвращает ``(user, предыдущий pro_expires_at)`` — срок сбрасывается
+    полностью, чтобы ``is_pro_active()`` сразу отдавал False.
+
+    Raises:
+        ValueError: пользователь не найден в БД (отзывать нечего).
+    """
+    if telegram_id <= 0:
+        raise ValueError("telegram_id must be positive")
+    stmt = select(User).where(User.telegram_id == telegram_id)
+    user = (await session.execute(stmt)).scalar_one_or_none()
+    if user is None:
+        raise ValueError("user not found")
+    previous = user.pro_expires_at
+    user.is_pro = False
+    user.pro_expires_at = None
+    await session.flush()
+    return user, previous
+
+
 __all__ = [
     "grant_pro",
+    "grant_pro_days",
     "normalize_manual_plan",
     "recent_payments",
     "revenue_by_day",
     "revenue_by_plan",
+    "revoke_pro",
 ]

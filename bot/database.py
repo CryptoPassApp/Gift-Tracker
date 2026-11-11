@@ -68,6 +68,8 @@ def _patch_schema(sync_connection) -> None:  # noqa: ANN001 — sqlalchemy callb
             "backdrop": "ALTER TABLE snipe_signals ADD COLUMN backdrop VARCHAR(64)",
             "symbol": "ALTER TABLE snipe_signals ADD COLUMN symbol VARCHAR(64)",
             "floor_basis": "ALTER TABLE snipe_signals ADD COLUMN floor_basis VARCHAR(96)",
+            "is_auction": "ALTER TABLE snipe_signals ADD COLUMN is_auction INTEGER DEFAULT 0 NOT NULL",
+            "auction_end_ts": "ALTER TABLE snipe_signals ADD COLUMN auction_end_ts REAL",
         },
         "users": {
             "min_discount": "ALTER TABLE users ADD COLUMN min_discount REAL DEFAULT 0 NOT NULL",

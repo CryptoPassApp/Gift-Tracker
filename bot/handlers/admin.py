@@ -7,6 +7,7 @@ admin:broadcast -> бот ждет сообщение -> копирует его
 from __future__ import annotations
 
 import logging
+import re
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
@@ -17,15 +18,18 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import get_settings
+from bot.handlers.support import admin_panel_with_badge
 from bot.handlers.ui import edit_screen
-from bot.keyboards import admin_panel_kb, cancel_kb
+from bot.keyboards import cancel_kb
 from bot.models import Alert, Payment, SnipeSignal, User
 from bot.services.admin_stats import (
     grant_pro,
+    grant_pro_days,
     normalize_manual_plan,
     recent_payments,
     revenue_by_day,
     revenue_by_plan,
+    revoke_pro,
 )
 from bot.services.notifier import Notifier
 
@@ -46,26 +50,55 @@ def _is_admin(telegram_id: int) -> bool:
 
 _GRANT_USAGE = (
     "👤 <b>Ручная выдача PRO</b>\n"
-    "Формат: <code>/grant &lt;telegram_id&gt; &lt;month|lifetime&gt;</code>\n"
-    "Пример: <code>/grant 123456789 month</code>\n"
+    "Формат: <code>/grant &lt;telegram_id&gt; &lt;month|lifetime|дней&gt;</code>\n"
+    "Примеры:\n"
+    "<code>/grant 123456789 month</code> — месяц\n"
+    "<code>/grant 123456789 10</code> — 10 дней\n"
+    "<code>/grant 123456789 0.5</code> — 12 часов\n"
+    "Забрать PRO: <code>/revoke &lt;telegram_id&gt;</code>\n"
     "Если пользователь еще не писал боту, запись будет создана автоматически."
 )
+
+_REVOKE_USAGE = (
+    "🚫 <b>Отзыв PRO</b>\n"
+    "Формат: <code>/revoke &lt;telegram_id&gt;</code>\n"
+    "Снимает PRO и обнуляет срок — в том числе у lifetime.\n"
+    "Работает только по тем, кто хотя бы раз писал боту."
+)
+
+
+def _human_days(days: float) -> str:
+    """«30 дней» / «1 день» / «12 ч» — человекочитаемый срок для ответа."""
+    if days == int(days):
+        n = int(days)
+        if n == 1:
+            return "1 день"
+        if 2 <= n <= 4:
+            return f"{n} дня"
+        return f"{n} дней"
+    hours = days * 24
+    if abs(hours - round(hours)) < 1e-9:
+        return f"{round(hours)} ч"
+    return f"{days:g} дн."
 
 
 # ----------------------------------------------------------------------
 # Вход в панель
 # ----------------------------------------------------------------------
 @router.message(Command("admin"))
-async def cmd_admin(message: Message, db_user: User) -> None:
+async def cmd_admin(message: Message, session: AsyncSession, db_user: User) -> None:
     """/admin — главная админ-панель."""
     if not _is_admin(db_user.telegram_id):
         await message.answer("⛔ Раздел только для администраторов.")
         return
-    await message.answer("🛠 <b>Админ-панель GiftTracker</b>\nВыбери действие:", reply_markup=admin_panel_kb())
+    kb = await admin_panel_with_badge(session)
+    await message.answer(
+        "🛠 <b>Админ-панель GiftTracker</b>\nВыбери действие:", reply_markup=kb
+    )
 
 
 @router.callback_query(F.data == "admin:panel")
-async def cb_admin_panel(callback: CallbackQuery, db_user: User) -> None:
+async def cb_admin_panel(callback: CallbackQuery, session: AsyncSession, db_user: User) -> None:
     """Кнопка «🛠 Админка» в главном меню — панель открывается на месте.
 
     Кнопка рисуется только админам, но проверку дублируем: callback из
@@ -77,7 +110,7 @@ async def cb_admin_panel(callback: CallbackQuery, db_user: User) -> None:
     await edit_screen(
         callback,
         "🛠 <b>Админ-панель GiftTracker</b>\nВыбери действие:",
-        admin_panel_kb(),
+        await admin_panel_with_badge(session),
     )
     await callback.answer()
 
@@ -155,9 +188,10 @@ async def cb_admin_stats(callback: CallbackQuery, session: AsyncSession, db_user
         "🧾 <b>Последние платежи:</b>\n"
         f"{recent_text}\n"
         "\n"
-        "👤 Выдать PRO вручную: /grant &lt;telegram_id&gt; &lt;month|lifetime&gt;"
+        "👤 Выдать PRO: /grant &lt;telegram_id&gt; &lt;month|lifetime|дней&gt;\n"
+        "🚫 Забрать PRO: /revoke &lt;telegram_id&gt;"
     )
-    await callback.message.edit_text(text, reply_markup=admin_panel_kb())
+    await callback.message.edit_text(text, reply_markup=await admin_panel_with_badge(session))
     await callback.answer()
 
 
@@ -175,9 +209,24 @@ async def cb_admin_grant(callback: CallbackQuery, db_user: User) -> None:
     await callback.answer()
 
 
+@router.callback_query(F.data == "admin:revoke")
+async def cb_admin_revoke(callback: CallbackQuery, db_user: User) -> None:
+    """Кнопка «Отозвать PRO»: показывает формат команды."""
+    if not _is_admin(db_user.telegram_id):
+        await callback.answer("⛔ Только для админов", show_alert=True)
+        return
+    if callback.message is not None:
+        await callback.message.answer(_REVOKE_USAGE)
+    await callback.answer()
+
+
 @router.message(Command("grant"))
 async def cmd_grant(message: Message, session: AsyncSession, db_user: User) -> None:
-    """``/grant <telegram_id> <month|lifetime>`` — ручная выдача/продление PRO."""
+    """``/grant <telegram_id> <month|lifetime|дней>`` — выдача/продление PRO.
+
+    Числовой аргумент — произвольный срок в днях (дробный = часы:
+    ``0.5`` = 12 часов). Продление суммируется с активной подпиской.
+    """
     if not _is_admin(db_user.telegram_id):
         await message.answer("⛔ Раздел только для администраторов.")
         return
@@ -189,11 +238,23 @@ async def cmd_grant(message: Message, session: AsyncSession, db_user: User) -> N
 
     telegram_id = int(parts[1])
     settings = get_settings()
+    arg = parts[2].strip().lower()
     try:
-        normalized = normalize_manual_plan(parts[2])
-        user = await grant_pro(
-            session, telegram_id, normalized, month_days=settings.PRO_MONTH_DAYS
-        )
+        if re.fullmatch(r"\d+(?:[.,]\d+)?", arg):
+            # Числовой срок: любое количество дней, дробное — в часах.
+            days = float(arg.replace(",", "."))
+            if days <= 0:
+                raise ValueError("days must be positive")
+            user = await grant_pro_days(session, telegram_id, days)
+            plan_label = _human_days(days)
+        else:
+            normalized = normalize_manual_plan(arg)
+            user = await grant_pro(
+                session, telegram_id, normalized, month_days=settings.PRO_MONTH_DAYS
+            )
+            plan_label = (
+                "Lifetime" if normalized == "pro_lifetime" else f"{settings.PRO_MONTH_DAYS} дней"
+            )
     except ValueError:
         await message.answer(_GRANT_USAGE)
         return
@@ -216,7 +277,7 @@ async def cmd_grant(message: Message, session: AsyncSession, db_user: User) -> N
         "Admin %s granted PRO: user=%s plan=%s",
         db_user.telegram_id,
         telegram_id,
-        normalized,
+        plan_label,
     )
 
     # Сообщаем получателю: PRO мог быть выдан, пока он не в чате с админом.
@@ -231,6 +292,57 @@ async def cmd_grant(message: Message, session: AsyncSession, db_user: User) -> N
         )
     except Exception:  # noqa: BLE001 — уведомление не ломает выдачу
         logger.warning("Grant notify failed for %s", user.telegram_id, exc_info=True)
+
+
+@router.message(Command("revoke"))
+async def cmd_revoke(message: Message, session: AsyncSession, db_user: User) -> None:
+    """``/revoke <telegram_id>`` — забрать PRO (в том числе lifetime)."""
+    if not _is_admin(db_user.telegram_id):
+        await message.answer("⛔ Раздел только для администраторов.")
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer(_REVOKE_USAGE)
+        return
+
+    telegram_id = int(parts[1])
+    try:
+        user, previous_expires = await revoke_pro(session, telegram_id)
+    except ValueError as exc:
+        await message.answer(f"⚠️ Не получилось: {exc}.")
+        return
+
+    if previous_expires is not None and previous_expires.year == 9999:
+        was = "навсегда"
+    elif previous_expires is not None:
+        was = previous_expires.strftime("%d.%m.%Y")
+    else:
+        was = "—"
+
+    await message.answer(
+        "🚫 <b>PRO отозван</b>\n"
+        f"👤 Telegram ID: <code>{user.telegram_id}</code>\n"
+        f"📅 Действовал до: <b>{was}</b>\n"
+        "Теперь для бота он FREE-пользователь."
+    )
+    logger.info(
+        "Admin %s revoked PRO: user=%s (was until %s)",
+        db_user.telegram_id,
+        telegram_id,
+        was,
+    )
+
+    # Уведомляем пользователя, чтобы не гадал, почему пропали пуши.
+    try:
+        await message.bot.send_message(
+            user.telegram_id,
+            "⚠️ <b>Доступ к PRO был отозван админом.</b>\n"
+            "Пуши снова приходят с задержкой, алерты — с лимитом.\n"
+            "Продлить можно командой /pro.",
+        )
+    except Exception:  # noqa: BLE001 — уведомление не ломает отзыв
+        logger.warning("Revoke notify failed for %s", user.telegram_id, exc_info=True)
 
 
 # ----------------------------------------------------------------------

@@ -310,12 +310,22 @@ def test_menu_has_referral_button_and_share_kb():
     assert "start%3Dref_123" in share[0].url
 
 
-def test_support_kb_hides_broken_url():
+def test_support_kb_is_in_bot_chat_no_external_links():
+    """Поддержка = чат прямо в боте: никаких внешних ссылок."""
     from bot.keyboards import support_kb
 
-    ok = support_kb("https://t.me/support_bot")
+    plain = support_kb(has_open_ticket=False)
+    assert all(b.url is None for row in plain.inline_keyboard for b in row)
     assert any(
-        b.url == "https://t.me/support_bot" for row in ok.inline_keyboard for b in row
+        b.callback_data == "support:write" for row in plain.inline_keyboard for b in row
     )
-    empty = support_kb("")
-    assert all(b.url is None for row in empty.inline_keyboard for b in row)
+    assert not any(
+        b.callback_data == "support:close" for row in plain.inline_keyboard for b in row
+    )
+
+    with_ticket = support_kb(has_open_ticket=True)
+    assert any(
+        b.callback_data == "support:close"
+        for row in with_ticket.inline_keyboard
+        for b in row
+    )

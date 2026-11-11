@@ -2259,6 +2259,17 @@
                 esc(value) + '</span>';
         }
 
+        function auctionTimeLeft(endTs) {
+            // «до конца 17 ч 03 мин»; истёкший таймер — «завершается».
+            const left = Number(endTs) * 1000 - Date.now();
+            if (!isFinite(left) || left <= 0) return 'завершается';
+            const mins = Math.max(1, Math.floor(left / 60000));
+            const h = Math.floor(mins / 60), m = mins % 60;
+            if (h >= 24) return 'до конца ' + Math.floor(h / 24) + ' д ' + (h % 24) + ' ч';
+            if (h > 0) return 'до конца ' + h + ' ч ' + String(m).padStart(2, '0') + ' мин';
+            return 'до конца ' + mins + ' мин';
+        }
+
         function dealCardHTML(sig, animate) {
             const gift = GIFT_BY_NAME[sig.gift_name] || { name: sig.gift_name, image: FALLBACK_IMAGE };
             const isHot = sig.discount_pct >= HOT_THRESHOLD;
@@ -2270,22 +2281,27 @@
                 }
             }
             if (!image) image = gift.image || FALLBACK_IMAGE;
-            // Подсветка NFT-блока: ember для HOT, изумруд для обычных сделок.
-            const glow = isHot ? 'bg-[#FF8A00]/30' : 'bg-[#00E676]/25';
+            // Подсветка NFT-блока: ember для HOT/аукционов, изумруд для обычных сделок.
+            const glow = (isHot || sig.is_auction) ? 'bg-[#FF8A00]/30' : 'bg-[#00E676]/25';
             // Tonviewer, а не app.tonkeeper.com/nft: маршрута /nft у Tonkeeper
             // нет (в документации только transfer/ton-connect) — Telegram
             // показывал «неверная ссылка». Tonviewer открывает тот же лот:
             // цена, статус продажи, ссылка на маркетплейс.
             const lotViewerUrl = sig.item_address ? ('https://tonviewer.com/' + sig.item_address) : null;
             const sourceLabel = String(sig.source || 'getgems').toUpperCase();
+            const isAuction = !!sig.is_auction;
             // Portals и Tonnel ведут в свои Mini App, поэтому кнопка
             // называется «Open in Portals / Tonnel».
-            const marketLabel = (sig.source || 'getgems') === 'getgems' ? 'Getgems' : sourceLabel;
-            const snipeLabel = (sig.source || '') === 'portals'
-                ? 'Open in Portals'
-                : ((sig.source || '') === 'tonnel'
-                    ? 'Open in Tonnel'
-                    : 'Snipe on ' + marketLabel);
+            const marketLabel = (sig.source || 'getgems') === 'getgems'
+                ? 'Getgems'
+                : ((sig.source || '') === 'fragment' ? 'Fragment' : sourceLabel);
+            const snipeLabel = isAuction
+                ? 'Ставка на ' + marketLabel
+                : ((sig.source || '') === 'portals'
+                    ? 'Open in Portals'
+                    : ((sig.source || '') === 'tonnel'
+                        ? 'Open in Tonnel'
+                        : 'Snipe on ' + marketLabel));
             const modelName = sig.model || '';
             // Эталон — флор этой модели (Leonardo у Plush Pepe), а не общий
             // флор коллекции: подписываем, с чем именно сравнивали цену.
@@ -2296,9 +2312,13 @@
                 : (String(sig.floor_basis || '') === 'mrkt_bid' ? 'MRKT автобай' : 'Floor');
             const traits = [sig.backdrop, sig.symbol].map(traitChip).join('');
 
-            const badge = isHot
-                ? '<span class="ember-gradient text-[#0B0E17] text-[10px] font-extrabold uppercase tracking-widest px-2.5 py-1 rounded-md inline-flex items-center gap-1">' + iconSvg('i-flame', 'w-3 h-3') + 'Hot Liquidation −' + fmtTon(sig.discount_pct, 1) + '%</span>'
-                : '<span class="bg-[#00E676]/15 text-[#00E676] border border-[#00E676]/30 text-[10px] font-extrabold uppercase tracking-widest px-2.5 py-1 rounded-md inline-flex items-center gap-1">' + iconSvg('i-bolt', 'w-3 h-3') + '−' + fmtTon(sig.discount_pct, 1) + '% Below Floor</span>';
+            const badge = isAuction
+                ? '<span class="bg-[#FF8A00]/15 text-[#FF8A00] border border-[#FF8A00]/30 text-[10px] font-extrabold uppercase tracking-widest px-2.5 py-1 rounded-md inline-flex items-center gap-1">' + iconSvg('i-clock', 'w-3 h-3') + 'Аукцион −' + fmtTon(sig.discount_pct, 1) + '%</span>'
+                : (isHot
+                    ? '<span class="ember-gradient text-[#0B0E17] text-[10px] font-extrabold uppercase tracking-widest px-2.5 py-1 rounded-md inline-flex items-center gap-1">' + iconSvg('i-flame', 'w-3 h-3') + 'Hot Liquidation −' + fmtTon(sig.discount_pct, 1) + '%</span>'
+                    : '<span class="bg-[#00E676]/15 text-[#00E676] border border-[#00E676]/30 text-[10px] font-extrabold uppercase tracking-widest px-2.5 py-1 rounded-md inline-flex items-center gap-1">' + iconSvg('i-bolt', 'w-3 h-3') + '−' + fmtTon(sig.discount_pct, 1) + '% Below Floor</span>');
+            // Таймер аукциона рядом с бейджем: «до конца 17 ч 03 мин».
+            const auctionTimer = isAuction && sig.auction_end_ts ? auctionTimeLeft(sig.auction_end_ts) : null;
 
             const lotViewerBtn = !lotViewerUrl ? '' :
                 (state.user.is_pro
@@ -2313,7 +2333,7 @@
             '<article data-url="' + esc(sig.marketplace_url) + '" class="deal-card ' + (animate ? 'deal-enter ' : '') + 'relative rounded-2xl bg-[#131926]/75 backdrop-blur-xl border border-white/[0.08] p-4' + (isHot ? ' ring-1 ring-[#FF8A00]/25' : '') + '">' +
                 '<div class="flex items-start justify-between mb-3">' +
                     badge +
-                    '<span class="time-ago text-[10px] font-medium text-[#475569]" data-ts="' + sig._ts + '">' + timeAgo(sig._ts) + '</span>' +
+                    '<span class="time-ago text-[10px] font-medium text-[#475569]" data-ts="' + sig._ts + '">' + (auctionTimer ? esc(auctionTimer) : timeAgo(sig._ts)) + '</span>' +
                 '</div>' +
 
                 '<div class="flex items-center gap-3.5 mb-3">' +
@@ -2336,8 +2356,8 @@
                 '<div class="rounded-xl bg-[#0B0E17]/65 border border-white/[0.05] p-3 mb-3">' +
                     '<div class="flex items-end justify-between">' +
                         '<div>' +
-                            '<p class="text-[9px] text-[#475569] uppercase font-bold tracking-widest mb-1">Buy Now</p>' +
-                            '<p class="deal-price num text-2xl font-extrabold tracking-tight text-[#00E676] text-glow-emerald">' + fmtTon(sig.deal_price) + ' TON</p>' +
+                            '<p class="text-[9px] text-[#475569] uppercase font-bold tracking-widest mb-1">' + (isAuction ? 'Ставка' : 'Buy Now') + '</p>' +
+                            '<p class="deal-price num text-2xl font-extrabold tracking-tight ' + (isAuction ? 'text-[#FF8A00]' : 'text-[#00E676]') + (isAuction ? '' : ' text-glow-emerald') + '">' + fmtTon(sig.deal_price) + ' TON</p>' +
                             '<p class="text-[10px] font-medium text-[#94A3B8] num mt-0.5">' + fmtUsd(sig.deal_price) + '</p>' +
                         '</div>' +
                         '<div class="deal-floor text-right">' +

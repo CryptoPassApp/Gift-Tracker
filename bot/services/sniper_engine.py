@@ -49,6 +49,8 @@ class Signal:
     backdrop: str | None = None  # атрибут Backdrop (Lemongrass, ...)
     symbol: str | None = None    # атрибут Symbol (Cap, ...)
     floor_basis: str | None = None  # "collection" | "model:<имя>"
+    is_auction: bool = False     # лот-аукцион: deal_price = текущая ставка
+    auction_end_ts: float | None = None  # unix ts конца (Fragment; Getgems не отдает)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -67,6 +69,8 @@ class Signal:
             "backdrop": self.backdrop,
             "symbol": self.symbol,
             "floor_basis": self.floor_basis,
+            "is_auction": self.is_auction,
+            "auction_end_ts": self.auction_end_ts,
             "created_at": self.created_at.isoformat() + "Z",
         }
 
@@ -135,6 +139,8 @@ def build_signal(
         backdrop=lot.backdrop,
         symbol=lot.symbol,
         floor_basis=floor_basis,
+        is_auction=lot.is_auction,
+        auction_end_ts=lot.auction_end_ts,
     )
 
 
@@ -314,6 +320,21 @@ class SniperEngine:
                 removed += 1
             elif result == "updated":
                 updated += 1
+        # Истёкшие таймеры аукционов: Fragment отдаёт время конца прямо в
+        # сетке, поэтому истёкший аукцион (выигран или закрыт без ставок)
+        # чистится БЕЗ сети — по одному полю. Getgems-аукционы живут до
+        # обычной сверки: TonAPI ответит «sale пропал».
+        for source in ("getgems", "fragment"):
+            for signal in await self.db.signals_for_verification(source, hours=48):
+                if not signal.is_auction or not signal.auction_end_ts:
+                    continue
+                try:
+                    expired = float(signal.auction_end_ts) <= time.time()
+                except (TypeError, ValueError):
+                    continue
+                if expired:
+                    await self.db.delete_snipe_signal(signal.id)
+                    removed += 1
         # То же для getgems-лотов, но через TonAPI: у Portals был свой
         # факт-чекер, а getgems-карточки жили в ленте даже когда лот уже
         # куплен, ушёл в аукцион или продавец поднял цену. TonAPI отвечает
@@ -325,24 +346,35 @@ class SniperEngine:
             if item is None:
                 continue  # сеть/лимиты — наугад ничего не удаляем
             sale = item.get("sale") or {}
-            if not sale or str(sale.get("type") or "") == "AuctionSale":
-                # продан/снят с продажи либо конвертирован в аукцион.
+            if not sale:
+                # продан/снят с продажи (аукцион закрылся без ставок — тоже сюда).
                 await self.db.delete_snipe_signal(signal.id)
                 removed += 1
                 continue
-            # Аукцион под видом фикса: TonAPI больше не отдает sale.type,
-            # аукционный контракт узнаем по интерфейсу (nft_auction_v1) —
-            # «цена» в sale это текущая ставка, покупкой она не является.
-            sale_addr = str(sale.get("address") or "")
-            if sale_addr and await self.market.is_auction_sale(sale_addr) is True:
+            if not signal.is_auction and str(sale.get("type") or "") == "AuctionSale":
+                # фикс-цена сконвертирована в аукцион: сделка умерла.
                 await self.db.delete_snipe_signal(signal.id)
                 removed += 1
                 continue
+            if not signal.is_auction:
+                # Аукцион под видом фикса: TonAPI больше не отдает sale.type,
+                # аукционный контракт узнаем по интерфейсу (nft_auction_v1) —
+                # «цена» в sale это текущая ставка, покупкой она не является.
+                # Аукционные карточки (is_auction) это РАБОЧИЙ формат: их
+                # перепроверяет сверка эталона ниже (ставка перебита > эталона
+                # → удаление), здесь их не трогаем.
+                sale_addr = str(sale.get("address") or "")
+                if sale_addr and await self.market.is_auction_sale(sale_addr) is True:
+                    await self.db.delete_snipe_signal(signal.id)
+                    removed += 1
+                    continue
             try:
                 live_price = int(sale["price"]["value"]) / 1e9
             except (KeyError, TypeError, ValueError):
                 continue
-            result = await self._apply_live_price(signal, live_price)
+            result = await self._apply_live_price(
+                signal, live_price, allow_rise_removal=not signal.is_auction
+            )
             if result == "removed":
                 removed += 1
             elif result == "updated":
@@ -358,7 +390,7 @@ class SniperEngine:
         # что и устаревшая цена лота.
         recent: list[Any] = []
         seen_ids: set[int] = set()
-        for source in ("getgems", "portals"):
+        for source in ("getgems", "portals", "fragment"):
             for sig in await self.db.signals_for_verification(source, hours=48):
                 if sig.id not in seen_ids:
                     seen_ids.add(sig.id)
@@ -432,7 +464,9 @@ class SniperEngine:
             )
         return removed
 
-    async def _apply_live_price(self, signal: Any, live_price: float) -> str | None:
+    async def _apply_live_price(
+        self, signal: Any, live_price: float, *, allow_rise_removal: bool = True
+    ) -> str | None:
         """Сверяет карточку с живой ценой лота: "removed" | "updated" | None.
 
         Лот жив, но цена на маркете уехала. Вверх за допуск — продавец
@@ -441,6 +475,9 @@ class SniperEngine:
         под живую цену: показывать «46 TON», когда на маркете уже 45 —
         ровно то, за что ленту ругают; а сделку, подешевевшую на 100 TON,
         удалять вместо обновления — терять лучшую цену входа.
+        Для аукционов (allow_rise_removal=False) рост ставки — норма:
+        карточку обновляем всегда, а удаляет её сверка эталона, когда
+        ставка перебила флор.
         """
         try:
             stored = float(signal.deal_price)
@@ -448,7 +485,7 @@ class SniperEngine:
             return None
         if stored <= 0 or live_price <= 0:
             return None
-        if live_price > stored:
+        if live_price > stored and allow_rise_removal:
             deviation = (live_price - stored) / stored
             if deviation > self.settings.FEED_VERIFY_PRICE_TOLERANCE:
                 # продавец поднял цену за допуск: это уже не та сделка.
@@ -516,6 +553,8 @@ class SniperEngine:
                     backdrop=signal.backdrop,
                     symbol=signal.symbol,
                     floor_basis=signal.floor_basis,
+                    is_auction=signal.is_auction,
+                    auction_end_ts=signal.auction_end_ts,
                     created_at=signal.created_at,
                 )
             )

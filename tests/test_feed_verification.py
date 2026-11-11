@@ -409,8 +409,10 @@ async def test_tonapi_auction_interface_dropped(tmp_path):
         {"address": "0:i4", "sale": {}},  # без адреса — не проверить, не режем
         {"address": "0:i5"},              # без sale — мимо фильтра
     ]
-    kept = await market._drop_auction_sales(None, items)  # client не нужен: _bulk заменён
-    assert [it["address"] for it in kept] == ["0:i2", "0:i3", "0:i4", "0:i5"]
+    fixed, auctions = await market._split_auction_sales(None, items)  # client не нужен: _bulk заменён
+    # Аукцион больше не выбрасывается, а уходит в отдельный поток алертов.
+    assert [it["address"] for it in fixed] == ["0:i2", "0:i3", "0:i4", "0:i5"]
+    assert [it["address"] for it in auctions] == ["0:i1"]
 
 
 async def test_tonapi_bulk_failure_fail_open(tmp_path):
@@ -422,8 +424,9 @@ async def test_tonapi_bulk_failure_fail_open(tmp_path):
 
     market._bulk_sale_interfaces = broken.__get__(market, type(market))
     items = [{"address": "0:i1", "sale": {"address": "0:aaa", "price": {"value": "1"}}}]
-    kept = await market._drop_auction_sales(None, items)
-    assert [it["address"] for it in kept] == ["0:i1"]
+    fixed, auctions = await market._split_auction_sales(None, items)
+    assert [it["address"] for it in fixed] == ["0:i1"]
+    assert auctions == []
 
 
 async def test_verify_feed_removes_auction_contract(tmp_path, db, monkeypatch):

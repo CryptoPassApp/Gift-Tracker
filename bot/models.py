@@ -107,6 +107,9 @@ class SnipeSignal(Base):
     symbol: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # На чем основан floor_price: "collection" или "model:<имя>".
     floor_basis: Mapped[str | None] = mapped_column(String(96), nullable=True)
+    # Аукцион: deal_price = текущая ставка (растет), не цена покупки.
+    is_auction: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    auction_end_ts: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False, index=True)
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -191,6 +194,55 @@ class CryptoPayment(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<CryptoPayment #{self.invoice_id} {self.plan} {self.amount} {self.asset} {self.status}>"
+
+
+class SupportTicket(Base):
+    """Диалог пользователя с тех-поддержкой прямо в чате бота.
+
+    У пользователя максимум один открытый тикет: пока он не закрыт,
+    новые сообщения дописываются в него. Закрытый остается в истории,
+    новое «Написать в поддержку» открывает следующий.
+    """
+
+    __tablename__ = "support_tickets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="open", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+    messages: Mapped[list["SupportMessage"]] = relationship(
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="SupportMessage.id",
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<SupportTicket #{self.id} user={self.user_id} {self.status}>"
+
+
+class SupportMessage(Base):
+    """Сообщение внутри тикета поддержки (от пользователя или админа)."""
+
+    __tablename__ = "support_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticket_id: Mapped[int] = mapped_column(
+        ForeignKey("support_tickets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    from_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    text: Mapped[str] = mapped_column(String(4000), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+    ticket: Mapped[SupportTicket] = relationship(back_populates="messages")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        side = "admin" if self.from_admin else "user"
+        return f"<SupportMessage #{self.id} ticket={self.ticket_id} {side}>"
 
 
 class ReferralReward(Base):

@@ -15,6 +15,8 @@ from bot.handlers import subscription
 from bot.models import Payment, User
 from bot.services.admin_stats import (
     grant_pro,
+    grant_pro_days,
+    revoke_pro,
     recent_payments,
     revenue_by_day,
     revenue_by_plan,
@@ -332,6 +334,67 @@ class TestAdminStats:
         async with db.session() as session:
             with pytest.raises(ValueError):
                 await grant_pro(session, 9005, "year")
+
+    # ------------------------------------------------------------------
+    # Произвольный срок (grant_pro_days) и отзыв (revoke_pro)
+    # ------------------------------------------------------------------
+    async def test_grant_pro_days_creates_user(self, db):
+        async with db.session() as session:
+            user = await grant_pro_days(session, 9101, 10)
+            assert user.telegram_id == 9101 and user.is_pro is True
+        stored = await load_user(db, 9101)
+        assert timedelta(days=9) < stored.pro_expires_at - datetime.utcnow() <= timedelta(days=10)
+
+    async def test_grant_fractional_days_is_hours(self, db):
+        async with db.session() as session:
+            user = await grant_pro_days(session, 9102, 0.5)
+        stored = await load_user(db, 9102)
+        delta = stored.pro_expires_at - datetime.utcnow()
+        assert timedelta(hours=11) < delta <= timedelta(hours=12)
+
+    async def test_grant_days_extends_active_subscription(self, db):
+        async with db.session() as session:
+            await grant_pro_days(session, 9103, 10)
+            await grant_pro_days(session, 9103, 5)
+        stored = await load_user(db, 9103)
+        delta = stored.pro_expires_at - datetime.utcnow()
+        assert timedelta(days=14) < delta <= timedelta(days=15)
+
+    async def test_grant_days_rejects_bad_args(self, db):
+        async with db.session() as session:
+            with pytest.raises(ValueError):
+                await grant_pro_days(session, 9104, 0)
+            with pytest.raises(ValueError):
+                await grant_pro_days(session, 0, 10)
+
+    async def test_grant_days_over_lifetime_does_not_break_expiry(self, db):
+        async with db.session() as session:
+            await grant_pro(session, 9105, "lifetime")
+            user = await grant_pro_days(session, 9105, 3)
+            assert user.pro_expires_at.year == 9999  # lifetime сохранен
+
+    async def test_revoke_pro_removes_access(self, db):
+        async with db.session() as session:
+            await grant_pro(session, 9106, "month", month_days=30)
+            user, previous = await revoke_pro(session, 9106)
+            assert user.is_pro is False and user.pro_expires_at is None
+            assert previous is not None and previous.year != 9999
+        stored = await load_user(db, 9106)
+        assert stored.is_pro_active() is False
+
+    async def test_revoke_pro_kills_lifetime(self, db):
+        async with db.session() as session:
+            await grant_pro(session, 9107, "lifetime")
+            user, previous = await revoke_pro(session, 9107)
+            assert user.is_pro is False
+            assert previous is not None and previous.year == 9999
+        stored = await load_user(db, 9107)
+        assert stored.is_pro_active() is False
+
+    async def test_revoke_unknown_user_raises(self, db):
+        async with db.session() as session:
+            with pytest.raises(ValueError):
+                await revoke_pro(session, 999999)
 
     async def test_admin_stats_handler_formats_revenue(self, db, tmp_path, monkeypatch):
         settings = make_settings(tmp_path, ADMIN_IDS=[111])

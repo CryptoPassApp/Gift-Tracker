@@ -26,6 +26,7 @@ import statistics
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -252,6 +253,14 @@ PORTALS_ITEM_URL = "https://t.me/portals_market_bot/market?startapp=gift_{id}"
 # MRKT: REST-апи их Mini App (доступно без Cloudflare, нужна сессия по initData).
 MRKT_API_BASE = "https://api.tgmrkt.io"
 
+# Fragment (официальная площадка Telegram): аукционы подарков. Страницы
+# читаются серверно с браузерным UA (API закрыт). Активный аукцион в сетке
+# несет <time datetime> — время конца, и текущую ставку в icon-ton.
+FRAGMENT_AUCTIONS_URL = "https://fragment.com/gifts/{slug}?filter=auction"
+FRAGMENT_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
+)
+
 
 def mrkt_order_url(order_id: str) -> str:
     """Ссылка на ордер-автобай в MRKT Mini App (как в share-ссылках GiftParser)."""
@@ -334,6 +343,10 @@ class Lot:
     model: str | None = None
     backdrop: str | None = None
     symbol: str | None = None
+    # Аукционный лот: price — ТЕКУЩАЯ ставка (или минимальная), покупкой
+    # она не является; выигрывает тот, кто перебил всех к концу таймера.
+    is_auction: bool = False
+    auction_end_ts: float | None = None  # unix ts конца аукциона (Fragment)
 
 
 @dataclass
@@ -408,6 +421,13 @@ class MarketAPI:
         self._portals_floors_at: float = 0.0
         # Картинки моделей из листингов Portals: "Gift|model" -> photo_url.
         self._portal_model_images: dict[str, str] = {}
+        # Кэп-предупреждения уже показанные: (gift, model) — иначе при каждом
+        # проходе одно и то же warning заспамливает журнал (скан раз в 5с).
+        self._capped_warned: set[tuple[str, str]] = set()
+        # Аукционы Fragment: кэш на TTL + курсор ротации по слагам пресетов.
+        self._fragment_cache: list[Lot] | None = None
+        self._fragment_cached_at: float = 0.0
+        self._fragment_cursor: int = 0
         # Официальные рендеры моделей из датасета (models/<gift>/config.json):
         # gift -> {model_casefold: webp_url}. Негативный результат кэшируется {}.
         self._dataset_model_images: dict[str, dict[str, str]] = {}
@@ -541,6 +561,9 @@ class MarketAPI:
         if source in {"giftdataset", "real", "getgems"}:
             # Реальный поток: sale-лоты Getgems через TonAPI (без токенов).
             lots.extend(await self._fetch_tonapi_listings())
+            # Аукционы Fragment (официальная площадка Telegram): скрейп
+            # сетки filter=auction, ротация по слагам, без ключей.
+            lots.extend(await self._fetch_fragment_auctions())
         else:
             # Демо-поток: только когда MARKET_SOURCE=mock.
             lots.extend(self._mock_listings(source="getgems"))
@@ -1111,8 +1134,11 @@ class MarketAPI:
                         break
                     # Аукцион под видом фикса: TonAPI больше не отдает
                     # sale.type, аукцион отличаем по интерфейсу контракта.
-                    items = await self._drop_auction_sales(client, items)
-                    lots.extend(self._parse_tonapi_items(items, name, preset))
+                    fixed_items, auction_items = await self._split_auction_sales(
+                        client, items
+                    )
+                    lots.extend(self._parse_tonapi_items(fixed_items, name, preset))
+                    lots.extend(self._parse_tonapi_auction_items(auction_items, name, preset))
                     if len(items) < 100:
                         offset = 0
                         break
@@ -1207,16 +1233,17 @@ class MarketAPI:
                     result[addr] = [str(i) for i in (acc.get("interfaces") or [])]
         return result
 
-    async def _drop_auction_sales(
+    async def _split_auction_sales(
         self, client: httpx.AsyncClient, items: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Убирает айтемы, чей sale-контракт — аукцион, а не фикс-цена.
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Делит айтемы на фикс-цену и аукцион по интерфейсу sale-контракта.
 
-        Ставка аукциона в ``sale.price`` не покупается: из-за пустого
+        Ставка аукциона в ``sale.price`` — не цена покупки: из-за пустого
         ``sale.type`` такие лоты выглядели «сделкой −37%» (Whip Cupcake
-        «2.60 TON» при флоре 4.14 — текущая ставка на аукционе). Сбой
-        _bulk — не режем ничего (fail-open): лучше пропустить аукцион,
-        чем опустошить ленту на сетевом сбое.
+        «2.60 TON» при флоре 4.14 — текущая ставка на аукционе). Аукционы
+        больше не выбрасываются: они — источник алертов «ставка ниже
+        флора, успей перебить». Сбой _bulk — не режем ничего (fail-open):
+        лучше пропустить аукцион, чем опустошить ленту на сетевом сбое.
         """
         sale_addresses = [
             str((it.get("sale") or {}).get("address") or "")
@@ -1225,28 +1252,26 @@ class MarketAPI:
         ]
         sale_addresses = [a for a in sale_addresses if a]
         if not sale_addresses:
-            return items
+            return items, []
         ifaces = await self._bulk_sale_interfaces(client, sale_addresses)
         if ifaces is None:
             logger.warning(
                 "TonAPI _bulk interfaces unavailable — %d sale item(s) passed unchecked",
                 len(sale_addresses),
             )
-            return items
-        kept: list[dict[str, Any]] = []
-        dropped = 0
+            return items, []
+        fixed: list[dict[str, Any]] = []
+        auctions: list[dict[str, Any]] = []
         for it in items:
             sale_addr = str((it.get("sale") or {}).get("address") or "")
             interfaces = ifaces.get(sale_addr) or []
             if any("auction" in str(i).lower() for i in interfaces):
-                dropped += 1
-                continue
-            kept.append(it)
-        if dropped:
-            logger.info(
-                "TonAPI: %d auction sale(s) dropped by contract interface", dropped
-            )
-        return kept
+                auctions.append(it)
+            else:
+                fixed.append(it)
+        if auctions:
+            logger.info("TonAPI: %d auction sale(s) harvested for alerts", len(auctions))
+        return fixed, auctions
 
     async def is_auction_sale(self, sale_address: str) -> bool | None:
         """True — sale-контракт аукциона; False — фикс-цена; None — не узнали.
@@ -1271,6 +1296,138 @@ class MarketAPI:
         except ValueError:
             return None
         return any("auction" in i.lower() for i in interfaces)
+
+    # ------------------------------------------------------------------
+    # Аукционы Fragment (официальная площадка Telegram, без ключей)
+    # ------------------------------------------------------------------
+    def _fragment_slugs(self) -> list[str]:
+        """Слаги пресетов для ротации аукционного скрейпа."""
+        slugs: list[str] = []
+        for name, preset in GIFT_PRESETS.items():
+            slug = preset.get("fragment_slug")
+            if slug:
+                slugs.append(str(slug))
+        return slugs
+
+    async def _fetch_fragment_auctions(self) -> list[Lot]:
+        """Живые аукционы Fragment: ротация по N слагам за проход.
+
+        Страница коллекции с filter=auction читается серверно (браузерный
+        UA; API у Fragment закрыт). Активный аукцион в сетке опознается по
+        tm-timer-wrap с <time datetime> — временем конца; лоты со статусом
+        «Available» без таймера пропускаются (не активный аукцион).
+        """
+        now = time.monotonic()
+        if (
+            self._fragment_cache is not None
+            and (now - self._fragment_cached_at) < self.settings.FRAGMENT_LISTINGS_TTL_SEC
+        ):
+            return self._fragment_cache
+
+        if not self._catalog:
+            await self.get_floors()
+
+        slugs = self._fragment_slugs()
+        if not slugs:
+            return []
+
+        per_pass = max(1, int(self.settings.FRAGMENT_SCAN_PER_PASS))
+        start = self._fragment_cursor % len(slugs)
+        taken = slugs[start : start + per_pass]
+        if len(taken) < per_pass:  # заворот без дублей
+            taken += slugs[: per_pass - len(taken)]
+        self._fragment_cursor = (start + len(taken)) % len(slugs)
+
+        slug_to_gift: dict[str, str] = {}
+        for name, preset in GIFT_PRESETS.items():
+            slug = preset.get("fragment_slug")
+            if slug:
+                slug_to_gift[str(slug)] = name
+
+        lots: list[Lot] = []
+        fetched = 0
+        for slug in taken:
+            gift_name = slug_to_gift.get(slug)
+            if not gift_name:
+                continue
+            if fetched:  # троттлинг между страницами
+                await asyncio.sleep(1.0)
+            try:
+                async with httpx.AsyncClient(
+                    timeout=15.0, headers={"User-Agent": FRAGMENT_BROWSER_UA}
+                ) as client:
+                    resp = await client.get(
+                        FRAGMENT_AUCTIONS_URL.format(slug=slug)
+                    )
+            except httpx.HTTPError:
+                continue
+            if resp.status_code != 200:
+                continue
+            fetched += 1
+            lots.extend(self._parse_fragment_auction_page(resp.text, gift_name, slug))
+
+        self._fragment_cache = lots
+        self._fragment_cached_at = now
+        if lots:
+            logger.info(
+                "Fragment auctions: %d live lot(s) from %d page(s) this pass",
+                len(lots),
+                fetched,
+            )
+        return lots
+
+    def _parse_fragment_auction_page(
+        self, html: str, gift_name: str, slug: str
+    ) -> list[Lot]:
+        """Сетка filter=auction -> лоты активных аукционов.
+
+        Активный аукцион: <a href="/gift/{slug}-{num}" class="tm-grid-item">
+        c tm-timer-wrap (время конца аукциона) и текущей ставкой в
+        icon-ton. У лота без таймера аукцион не активен — пропускаем.
+        Модель/фон/символ из сетки недоступны — эталон флора коллекции.
+        """
+        lots: list[Lot] = []
+        item_re = re.compile(
+            r'<a href="/gift/' + re.escape(slug) + r"-(\d+)[^\"]*\" class=\"tm-grid-item\">(.*?)</a>",
+            re.S,
+        )
+        for match in item_re.finditer(html):
+            num_str, body = match.group(1), match.group(2)
+            if "tm-timer-wrap" not in body:
+                continue
+            end_match = re.search(r'<time datetime="([^"]+)"', body)
+            price_match = re.search(r'icon-ton">\s*([\d,\s]+?)\s*<', body)
+            if not end_match or not price_match:
+                continue
+            try:
+                end_dt = datetime.fromisoformat(end_match.group(1))
+                auction_end_ts = end_dt.timestamp()
+            except ValueError:
+                continue
+            if auction_end_ts <= time.time():
+                continue  # таймер истек, страница еще не переелистнулась
+            try:
+                price_ton = float(price_match.group(1).replace(",", "").replace(" ", ""))
+            except ValueError:
+                continue
+            if price_ton <= 0:
+                continue
+            num = int(num_str)
+            lots.append(
+                Lot(
+                    gift_name=gift_name,
+                    lot_number=f"#{num}",
+                    price=round(price_ton, 2),
+                    marketplace_url=f"https://fragment.com/gift/{slug}-{num}",
+                    item_address=None,
+                    image_url=fragment_model_image(gift_name, num, slug),
+                    model_number=num,
+                    source="fragment",
+                    is_auction=True,
+                    auction_end_ts=auction_end_ts,
+                )
+            )
+        return lots
 
     def _parse_tonapi_items(
         self, items: list[dict[str, Any]], gift_name: str, preset: dict[str, Any]
@@ -1372,6 +1529,67 @@ class MarketAPI:
                         asks[lot.model] = lot.price
             if asks:
                 self._record_model_asks(gift_name, asks)
+        return lots
+
+    def _parse_tonapi_auction_items(
+        self, items: list[dict[str, Any]], gift_name: str, preset: dict[str, Any]
+    ) -> list[Lot]:
+        """Аукционы Getgems -> лоты с is_auction=True.
+
+        ``sale.price`` у аукциона — ТЕКУЩАЯ ставка (или минимальная при
+        нулевых ставках), а не цена покупки: сигнал считается от неё, и
+        «ставка ниже флора на 15%» — честная возможность забрать лот по
+        стартовой цене, если никто не перебьёт до конца таймера.
+
+        Аукционы НЕ пишутся в _price_samples и в market_floors: ставка
+        аукциона — не флор, и мин-мерж ставки по пачке пагинации отравил
+        бы эталон фиксов (тот самый рот-баг среза пагинации).
+        """
+        lots: list[Lot] = []
+        for item in items:
+            sale = item.get("sale") or {}
+            # Мертвая сторонняя площадка под видом аукциона: у живого
+            # Getgems-аукциона market либо getgems, либо пуст.
+            market_name = str((sale.get("market") or {}).get("name") or "").lower()
+            if market_name and "getgems" not in market_name:
+                continue
+            price_info = sale.get("price") or {}
+            try:
+                price_ton = float(price_info.get("value")) / 1e9
+            except (TypeError, ValueError):
+                continue
+            if price_ton <= 0:
+                continue
+            address = item.get("address")
+            if not address:
+                continue
+            meta = item.get("metadata") or {}
+            match = re.search(r"#(\d+)", str(meta.get("name") or ""))
+            model_number = int(match.group(1)) if match else None
+            traits = extract_traits(meta)
+            clean_addr = friendly_address(address)
+            lots.append(
+                Lot(
+                    gift_name=gift_name,
+                    lot_number=f"#{model_number}" if model_number else "#----",
+                    price=round(price_ton, 2),
+                    marketplace_url=getgems_item_url(clean_addr),
+                    item_address=clean_addr,
+                    image_url=(
+                        fragment_model_image(
+                            gift_name, model_number, preset.get("fragment_slug")
+                        )
+                        if model_number
+                        else preset.get("image")
+                    ),
+                    model_number=model_number,
+                    source="getgems",
+                    model=traits["model"],
+                    backdrop=traits["backdrop"],
+                    symbol=traits["symbol"],
+                    is_auction=True,
+                )
+            )
         return lots
 
     def _record_model_asks(self, gift_name: str, asks: dict[str, float]) -> None:
@@ -1699,13 +1917,17 @@ class MarketAPI:
                     reference = round(model_floor, 2)
                     basis = f"model:{lot.model}"
                 else:
-                    logger.warning(
-                        "Model floor for %s/%s (%.1f TON) is %.1fx above collection floor — capped",
-                        lot.gift_name,
-                        lot.model,
-                        model_floor,
-                        model_floor / base,
-                    )
+                    # Логируем кэп один раз на (gift, model) за жизнь процесса —
+                    # лоты переоцениваются на каждом 5-секундном проходе.
+                    if (lot.gift_name, lot.model) not in self._capped_warned:
+                        self._capped_warned.add((lot.gift_name, lot.model))
+                        logger.warning(
+                            "Model floor for %s/%s (%.1f TON) is %.1fx above collection floor — capped",
+                            lot.gift_name,
+                            lot.model,
+                            model_floor,
+                            model_floor / base,
+                        )
 
         # Эталон может быть еще выше: топ-бида автобая MRKT — покупатель уже
         # стоит с деньгами и готов забрать подарок этой коллекции. Лот дешевле

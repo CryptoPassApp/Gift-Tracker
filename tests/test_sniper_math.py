@@ -132,6 +132,7 @@ class TestEvaluateLot:
             "discount_pct", "net_profit_ton", "marketplace_url",
             "image_url", "item_address", "source", "is_hot", "created_at",
             "model", "backdrop", "symbol", "floor_basis",
+            "is_auction", "auction_end_ts",
         } == set(payload.keys())
         assert payload["created_at"].endswith("Z")
 

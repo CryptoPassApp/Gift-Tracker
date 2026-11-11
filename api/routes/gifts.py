@@ -157,6 +157,9 @@ def _signal_to_dict(sig: SnipeSignal) -> dict[str, Any]:
             f"https://app.tonkeeper.com/nft/{clean_addr}" if clean_addr else None
         ),
         "is_hot": sig.discount_pct >= get_settings().HOT_THRESHOLD_PCT,
+        # Аукцион: deal_price — текущая ставка, а не цена покупки.
+        "is_auction": bool(getattr(sig, "is_auction", False)),
+        "auction_end_ts": getattr(sig, "auction_end_ts", None),
         "created_at": sig.created_at.isoformat() + "Z",
     }
 

@@ -140,11 +140,16 @@ def alerts_screen_kb(
     return builder.as_markup()
 
 
-def admin_panel_kb() -> InlineKeyboardMarkup:
-    """Админ-панель."""
+def admin_panel_kb(open_dialogs: int | None = None) -> InlineKeyboardMarkup:
+    """Админ-панель; ``open_dialogs`` — бейдж открытых диалогов поддержки."""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="📊 Статистика", callback_data="admin:stats"))
+    label = "💬 Сообщения от людей"
+    if open_dialogs:
+        label += f" · {open_dialogs}"
+    builder.row(InlineKeyboardButton(text=label, callback_data="admin:support"))
     builder.row(InlineKeyboardButton(text="👤 Выдать PRO", callback_data="admin:grant"))
+    builder.row(InlineKeyboardButton(text="🚫 Отозвать PRO", callback_data="admin:revoke"))
     builder.row(InlineKeyboardButton(text="📣 Рассылка всем", callback_data="admin:broadcast"))
     builder.row(InlineKeyboardButton(text="« В меню", callback_data="menu:start"))
     return builder.as_markup()
@@ -157,12 +162,78 @@ def back_to_menu_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def support_kb(support_url: str | None) -> InlineKeyboardMarkup:
-    """Экран «Тех-поддержка»: ссылка на саппорт-бота/акк + назад в меню."""
+def support_kb(has_open_ticket: bool = False) -> InlineKeyboardMarkup:
+    """Экран «Тех-поддержка»: переписка прямо в боте, без внешних ссылок."""
     builder = InlineKeyboardBuilder()
-    if support_url and str(support_url).startswith("https://t.me/"):
-        builder.row(InlineKeyboardButton(text="💬 Написать в поддержку", url=support_url))
+    builder.row(
+        InlineKeyboardButton(text="💬 Написать в поддержку", callback_data="support:write")
+    )
+    if has_open_ticket:
+        builder.row(
+            InlineKeyboardButton(text="✕ Завершить диалог", callback_data="support:close")
+        )
     builder.row(InlineKeyboardButton(text="« В меню", callback_data="menu:start"))
+    return builder.as_markup()
+
+
+def support_write_kb() -> InlineKeyboardMarkup:
+    """Клавиатура режима «пишу в поддержку»: выйти из режима ввода."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✕ Не отправлять", callback_data="support:cancel")
+    )
+    return builder.as_markup()
+
+
+def support_open_kb() -> InlineKeyboardMarkup:
+    """Ответ поддержки пользователю: можно сразу продолжить диалог."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="↩️ Ответить", callback_data="support:write")
+    )
+    builder.row(
+        InlineKeyboardButton(text="✕ Завершить диалог", callback_data="support:close")
+    )
+    return builder.as_markup()
+
+
+def admin_support_dialog_kb(ticket_id: int, is_open: bool = True) -> InlineKeyboardMarkup:
+    """Экран диалога в админке: ответ, завершение, назад в админку."""
+    builder = InlineKeyboardBuilder()
+    if is_open:
+        builder.row(
+            InlineKeyboardButton(text="↩️ Ответить", callback_data=f"supadm:reply:{ticket_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="✕ Завершить диалог", callback_data=f"supadm:close:{ticket_id}")
+        )
+    builder.row(
+        InlineKeyboardButton(text="« К диалогам", callback_data="admin:support")
+    )
+    return builder.as_markup()
+
+
+def admin_reply_kb(ticket_id: int) -> InlineKeyboardMarkup:
+    """Режим ответа админа: завершить диалог или не отвечать."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✕ Завершить диалог", callback_data=f"supadm:close:{ticket_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text="« Не отвечать", callback_data="supadm:cancel")
+    )
+    return builder.as_markup()
+
+
+def admin_ticket_relay_kb(ticket_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура на пересланном сообщении пользователя админам."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=f"↩️ Ответить · #{ticket_id}", callback_data=f"supadm:reply:{ticket_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text="✕ Завершить диалог", callback_data=f"supadm:close:{ticket_id}")
+    )
     return builder.as_markup()
 
 
@@ -203,5 +274,11 @@ __all__ = [
     "back_to_menu_kb",
     "cancel_kb",
     "settings_kb",
+    "support_kb",
+    "support_write_kb",
+    "support_open_kb",
+    "admin_support_dialog_kb",
+    "admin_reply_kb",
+    "admin_ticket_relay_kb",
     "DISCOUNT_THRESHOLD_OPTIONS",
 ]
