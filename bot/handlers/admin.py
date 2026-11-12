@@ -474,7 +474,7 @@ async def cmd_ban(message: Message, session: AsyncSession, db_user: User) -> Non
             "⛔ <b>Вы заблокированы в боте.</b>\n"
             f"Причина: «{_esc(user.ban_reason)}»\n"
             "\n"
-            "Если считаешь это ошибкой — напиши администратору.",
+            "Если считаете это ошибкой — напишите администратору.",
         )
     except Exception:  # noqa: BLE001 — уведомление не ломает бан
         logger.warning("Ban notify failed for %s", user.telegram_id, exc_info=True)
