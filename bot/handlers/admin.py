@@ -72,17 +72,21 @@ _REVOKE_USAGE = (
 
 _BAN_USAGE = (
     "⛔ <b>Бан пользователя</b>\n"
-    "Формат: <code>/ban &lt;telegram_id&gt; &lt;причина&gt;</code>\n"
-    "Пример: <code>/ban 123456789 Спам и попытка скама</code>\n"
+    "Формат: <code>/ban &lt;telegram_id | @username&gt; &lt;причина&gt;</code>\n"
+    "Примеры:\n"
+    "<code>/ban 123456789 Спам и попытка скама</code>\n"
+    "<code>/ban @username Спам и попытка скама</code>\n"
     "Пользователь получает сообщение с причиной, его сообщения\n"
     "и запросы к Mini App отсекаются, пуши не доставляются.\n"
-    "Разбан: <code>/unban &lt;telegram_id&gt;</code>"
+    "Разбан: <code>/unban &lt;telegram_id | @username&gt;</code>"
 )
 
 _UNBAN_USAGE = (
-    "✅ <b>Разбан</b>\n"
-    "Формат: <code>/unban &lt;telegram_id&gt;</code>\n"
-    "Снимает бан, возвращает доступ к боту и Mini App."
+    "ℹ️ <b>Разбан — формат команды</b> (это справка, а не результат)\n"
+    "Формат: <code>/unban &lt;telegram_id | @username&gt;</code>\n"
+    "Примеры: <code>/unban 123456789</code> или <code>/unban @username</code>\n"
+    "Снимает бан и возвращает доступ к боту и Mini App.\n"
+    "Юзернейм работает, только если человек уже писал боту."
 )
 
 
@@ -109,6 +113,23 @@ def _esc(text: str | None) -> str:
     и сам бан/выдача PRO теряются вместе с ответом админу.
     """
     return html.escape(text or "", quote=False)
+
+
+async def _resolve_telegram_id(session: AsyncSession, ref: str) -> int | None:
+    """«123456789» / «@username» / «username» → telegram_id (или None).
+
+    Юзернейм ищется по базе: банить/разбанивать можно только тех, кто
+    хотя бы раз писал боту, поэтому локального резолва достаточно.
+    """
+    ref = (ref or "").strip()
+    if not ref:
+        return None
+    if ref.lstrip("@").isdigit():
+        return int(ref.lstrip("@"))
+    username = ref.lstrip("@").lower()
+    stmt = select(User).where(func.lower(User.username) == username)
+    user = (await session.execute(stmt)).scalar_one_or_none()
+    return user.telegram_id if user else None
 
 
 # ----------------------------------------------------------------------
@@ -424,17 +445,24 @@ async def cb_admin_ban(callback: CallbackQuery, db_user: User) -> None:
 
 @router.message(Command("ban"))
 async def cmd_ban(message: Message, session: AsyncSession, db_user: User) -> None:
-    """``/ban <telegram_id> <причина>`` — блокировка доступа к боту и Mini App."""
+    """``/ban <telegram_id | @username> <причина>`` — блокировка доступа."""
     if not _is_admin(db_user.telegram_id):
         await message.answer("⛔ Раздел только для администраторов.")
         return
 
     parts = (message.text or "").split(maxsplit=2)
-    if len(parts) < 2 or not parts[1].isdigit():
+    if len(parts) < 2:
         await message.answer(_BAN_USAGE)
         return
 
-    telegram_id = int(parts[1])
+    telegram_id = await _resolve_telegram_id(session, parts[1])
+    if telegram_id is None:
+        await message.answer(
+            "⚠️ Не нашел такого пользователя в базе (банить можно только тех, "
+            "кто хотя бы раз писал боту).\n"
+            "Проверь ID или юзернейм — формат: /ban &lt;telegram_id | @username&gt; &lt;причина&gt;"
+        )
+        return
     reason = parts[2].strip() if len(parts) > 2 else "нарушение правил"
     try:
         user, was_banned = await ban_user(session, telegram_id, reason)
@@ -482,17 +510,23 @@ async def cmd_ban(message: Message, session: AsyncSession, db_user: User) -> Non
 
 @router.message(Command("unban"))
 async def cmd_unban(message: Message, session: AsyncSession, db_user: User) -> None:
-    """``/unban <telegram_id>`` — снять бан, вернуть доступ."""
+    """``/unban <telegram_id | @username>`` — снять бан, вернуть доступ."""
     if not _is_admin(db_user.telegram_id):
         await message.answer("⛔ Раздел только для администраторов.")
         return
 
     parts = (message.text or "").split()
-    if len(parts) != 2 or not parts[1].isdigit():
+    if len(parts) != 2:
         await message.answer(_UNBAN_USAGE)
         return
 
-    telegram_id = int(parts[1])
+    telegram_id = await _resolve_telegram_id(session, parts[1])
+    if telegram_id is None:
+        await message.answer(
+            "⚠️ Не нашел такого пользователя в базе.\n"
+            "Проверь ID или юзернейм — формат: /unban &lt;telegram_id | @username&gt;"
+        )
+        return
     try:
         user, previous_reason = await unban_user(session, telegram_id)
     except ValueError as exc:

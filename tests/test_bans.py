@@ -153,10 +153,13 @@ async def _admin(db, tmp_path, monkeypatch, telegram_id: int = 111):
     return admin_user
 
 
-async def _mk_target(db, telegram_id: int) -> None:
+async def _mk_target(db, telegram_id: int, username: str | None = None) -> None:
     """Бан работает только по существующим юзерам — создаем жертву."""
     async with db.session() as session:
-        await get_or_create_user(session, {"id": telegram_id})
+        payload = {"id": telegram_id}
+        if username:
+            payload["username"] = username
+        await get_or_create_user(session, payload)
 
 
 async def test_ban_command_persists_ban_and_reason(db, tmp_path, monkeypatch):
@@ -235,6 +238,53 @@ async def test_unban_without_ban_shows_error(db, tmp_path, monkeypatch):
     async with db.session() as session:
         await admin_handler.cmd_unban(message, session, admin_user)
     assert "Не получилось" in message.answers[-1]
+
+
+# ----------------------------------------------------------------------
+# Бан/разбан по @username: прод-кейс «/unban без числового ID»
+# ----------------------------------------------------------------------
+async def test_ban_and_unban_by_username(db, tmp_path, monkeypatch):
+    """Полный цикл по юзернейму: /ban @u причина → /unban @u — оба работают."""
+    admin_user = await _admin(db, tmp_path, monkeypatch)
+    await _mk_target(db, 9305, username="banmeplz")
+
+    ban_msg = FakeMessage(text="/ban @banmeplz спам по юзернейму")
+    async with db.session() as session:
+        await admin_handler.cmd_ban(ban_msg, session, admin_user)
+    assert "забанен" in ban_msg.answers[-1]
+    stored = await load_user_by_id(db, 9305)
+    assert stored.is_banned is True
+
+    unban_msg = FakeMessage(text="/unban @banmeplz")
+    async with db.session() as session:
+        await admin_handler.cmd_unban(unban_msg, session, admin_user)
+    assert "Бан снят" in unban_msg.answers[-1]
+    stored = await load_user_by_id(db, 9305)
+    assert stored.is_banned is False and stored.ban_reason is None
+
+
+async def test_unban_unknown_username_shows_clear_error(db, tmp_path, monkeypatch):
+    """Юзернейма нет в базе → внятная ошибка, а не «успешная» справка."""
+    admin_user = await _admin(db, tmp_path, monkeypatch)
+    message = FakeMessage(text="/unban @never_wrote_to_bot")
+    async with db.session() as session:
+        await admin_handler.cmd_unban(message, session, admin_user)
+    assert "Не нашел" in message.answers[-1]
+    assert "ормат" in "".join(message.answers)
+
+
+async def test_unban_without_args_shows_info_not_success(db, tmp_path, monkeypatch):
+    """/unban без аргумента = справка с ℹ️, а не «успех» с ✅.
+
+    Прод-путаница: старая подсказка начиналась с «✅ Разбан» и слов
+    «возвращает доступ» — админ читал ее как подтверждение разбана.
+    """
+    admin_user = await _admin(db, tmp_path, monkeypatch)
+    message = FakeMessage(text="/unban")
+    async with db.session() as session:
+        await admin_handler.cmd_unban(message, session, admin_user)
+    assert "формат команды" in message.answers[-1]
+    assert not message.answers[-1].startswith("✅")
 
 
 # ----------------------------------------------------------------------
