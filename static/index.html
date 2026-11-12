@@ -1141,6 +1141,7 @@
 
         const state = {
             demo: !isTelegramEnv,          // true when opened outside Telegram or backend unreachable
+            banned: false,                 // 403 от API: единственный экран бана, демо отключено
             user: { is_pro: false, username: null },
             lang: (function () {
                 try { return localStorage.getItem('gt_lang') === 'en' ? 'en' : 'ru'; }
@@ -1266,6 +1267,8 @@
         const I18N = {
             ru: {
                 'nav.profile': 'Профиль',
+                'banned.title': 'Доступ заблокирован',
+                'banned.noReason': 'Причина не указана',
                 'filters.all_sources': 'Все источники',
                 'filters.search': 'Коллекция или модель: Pepe, Leonardo…',
                 'filters.min': 'от, TON',
@@ -1379,6 +1382,8 @@
             },
             en: {
                 'nav.profile': 'Profile',
+                'banned.title': 'Access blocked',
+                'banned.noReason': 'No reason provided',
                 'filters.all_sources': 'All sources',
                 'filters.search': 'Collection or model: Pepe, Leonardo…',
                 'filters.min': 'from, TON',
@@ -1551,6 +1556,9 @@
             // Пикер калькулятора открыт — перерисовать его тексты на новом языке.
             const calcOverlay = $('#calcPickerOverlay');
             if (calcOverlay && !calcOverlay.classList.contains('hidden')) renderCalcPicker();
+            // Экран бана поверх всего — обновить тексты на новом языке.
+            const bannedTitle = $('#bannedTitle');
+            if (bannedTitle) bannedTitle.textContent = t('banned.title');
         }
 
         function profileRow(id, icon, title, hint) {
@@ -1810,7 +1818,11 @@
             if (!res.ok) {
                 let detail = '';
                 try { const j = await res.json(); detail = j.detail || ''; } catch (e) { /* noop */ }
-                throw new Error(detail || ('HTTP ' + res.status));
+                // status нужен вызывающему коду: 403 = бан (отдельный экран),
+                // остальное — сеть/бэкенд (демо-фоллбек).
+                const err = new Error(detail || ('HTTP ' + res.status));
+                err.status = res.status;
+                throw err;
             }
             return res.json();
         }
@@ -1937,7 +1949,46 @@
             }
         }
 
+        // Забаненный аккаунт: единственная статичная страница без действий.
+        // Никакого Demo Mode, ленты и кнопок — оверлей перекрывает все 100% экрана.
+        function showBannedScreen(serverDetail) {
+            if (state.banned) return;
+            state.banned = true;
+
+            // Останавливаем все фоновые циклы: за оверлеем ничего не должно жить.
+            ['realPollFeed', 'realPollFloors', 'demoTimer', 'demoRetryTimer'].forEach(key => {
+                if (state[key]) { clearInterval(state[key]); state[key] = null; }
+            });
+            ['#app', 'nav', '#toasts', '#demoBadge'].forEach(sel => {
+                const el = $(sel);
+                if (el) el.classList.add('hidden');
+            });
+
+            // Сервер присылает «Доступ заблокирован. Причина: X» — берем саму причину.
+            let reason = String(serverDetail || '').trim();
+            const m = /Причина:\s*(.+)$/i.exec(reason);
+            if (m) reason = m[1].trim();
+
+            const overlay = document.createElement('div');
+            overlay.id = 'bannedScreen';
+            overlay.className = 'fixed inset-0 z-[200] bg-[#0B0E17] flex items-center justify-center px-6';
+            overlay.innerHTML =
+                '<div class="max-w-[340px] w-full text-center">' +
+                    '<div class="mx-auto w-16 h-16 rounded-2xl bg-[#EF4444]/10 border border-[#EF4444]/30 flex items-center justify-center">' +
+                        '<svg class="w-8 h-8 text-[#EF4444]" fill="none" aria-hidden="true"><use href="#i-x"></use></svg>' +
+                    '</div>' +
+                    '<p id="bannedTitle" class="mt-5 text-xl font-extrabold tracking-tight">' + esc(t('banned.title')) + '</p>' +
+                    '<p id="bannedReason" class="mt-2 text-sm text-[#94A3B8] font-medium leading-relaxed">' +
+                        (reason ? esc(reason) : esc(t('banned.noReason'))) +
+                    '</p>' +
+                    '<p class="mt-6 text-[10px] font-bold tracking-widest text-[#475569]">HTTP 403 · BANNED</p>' +
+                '</div>';
+            document.body.appendChild(overlay);
+        }
+
         function enterDemoMode(offline) {
+            // Забаненным демо не показывается никогда.
+            if (state.banned) return;
             state.demo = true;
             state.user = {
                 is_pro: false,
@@ -1973,7 +2024,11 @@
                         }
                         exitDemoMode();
                         toast('Бэкенд вернулся — переключаюсь на живую ленту');
-                    } catch (e) { /* бэкенд всё еще недоступен */ }
+                    } catch (e) {
+                        // Вышли из демо прямо в бан — демо немедленно гасим.
+                        if (e && e.status === 403) { exitDemoMode(); showBannedScreen(e.message); }
+                        /* иначе бэкенд всё еще недоступен */
+                    }
                 }, 30000);
             }
 
@@ -2212,7 +2267,11 @@
             try {
                 applyFeedList(await fetchFeedList(), true);
                 $('#feedUpdated').textContent = 'live · ' + new Date().toLocaleTimeString();
-            } catch (e) { /* временная сеть — оставляем прошлую ленту */ }
+            } catch (e) {
+                // Бан может прилететь посреди сессии — сразу экран блокировки.
+                if (e && e.status === 403) { showBannedScreen(e.message); return; }
+                /* временная сеть — оставляем прошлую ленту */
+            }
         }
 
         function feedMatchesFilter(sig) {
@@ -3593,6 +3652,11 @@
                 startRealPolling();
                 toast('Терминал подключен к живому рынку');
             } catch (err) {
+                // 403 = аккаунт забанен: одна статичная страница, без демо и действий.
+                if (err && err.status === 403) {
+                    showBannedScreen(err.message);
+                    return;
+                }
                 // Opened in Telegram, but the backend is unreachable -> autonomous demo
                 enterDemoMode(true);
             }
