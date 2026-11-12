@@ -108,6 +108,13 @@ async def get_current_user(
 
     async with db.session() as session:
         user = await get_or_create_user(session, payload)
+        # Забаненный пользователь: весь Mini App API закрыт (403 с причиной).
+        if getattr(user, "is_banned", False):
+            reason = getattr(user, "ban_reason", None) or "нарушение правил"
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Доступ заблокирован. Причина: {reason}",
+            )
         return user
 
 

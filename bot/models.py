@@ -37,6 +37,9 @@ class User(Base):
     # ссылку ref_<CODE> можно шарить, не светя свой айди. Выдается лениво
     # (database.ensure_referral_code), UNIQUE-индекс в _patch_schema.
     referral_code: Mapped[str | None] = mapped_column(String(16), unique=True, nullable=True)
+    # Бан админом: отсекает сообщения (middleware), пуши (notifier) и Mini App API (403).
+    is_banned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ban_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     last_active_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)

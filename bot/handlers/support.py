@@ -1,4 +1,4 @@
-"""Тех-поддержка внутри бота: диалог юзера с админом без внешних ссылок.
+﻿"""Тех-поддержка внутри бота: диалог юзера с админом без внешних ссылок.
 
 Юзер жмет «Написать в поддержку», пишет сообщение — оно сохраняется в
 тикет в БД. В личный чат админа ничего не шлется: все обращения админ
@@ -620,9 +620,9 @@ async def cb_admin_close_ticket(
 
 
 # Бейдж открытых диалогов на панели — используется хендлерами admin.py.
-async def admin_panel_with_badge(session: AsyncSession) -> InlineKeyboardMarkup:
+async def admin_panel_with_badge(session: AsyncSession, **panel_kwargs) -> InlineKeyboardMarkup:
     """Админ-панель со счетчиком открытых диалогов поддержки."""
-    return admin_panel_kb(open_dialogs=await _open_dialog_count(session))
+    return admin_panel_kb(open_dialogs=await _open_dialog_count(session), **panel_kwargs)
 
 
 __all__ = ["router", "SupportFSM", "SupportAdminFSM", "admin_panel_with_badge"]

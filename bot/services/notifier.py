@@ -226,8 +226,10 @@ class Notifier:
 
         PRO-пользователь может задать порог дисконта (User.min_discount):
         сигналы слабее порога ему не отправляются. Персональные алерты этот
-        фильтр не затрагивают — у них собственный min_discount.
+        фильтр не затрагивают — у них собственный min_discount. Забаненные
+        пользователи не получают ничего.
         """
+        users = [u for u in users if not getattr(u, "is_banned", False)]
         if not users:
             return
         caption = _signal_caption(signal)
@@ -253,8 +255,12 @@ class Notifier:
         )
 
     async def push_alert_matches(self, signal: Signal, alerts: list[Alert]) -> None:
-        """Рассылает уведомления по персональным триггерам."""
+        """Рассылает уведомления по персональным триггерам (без забаненных)."""
         photo_url = push_photo_url(signal.image_url)
+        alerts = [
+            a for a in alerts
+            if a.user is not None and not getattr(a.user, "is_banned", False)
+        ]
         for alert in alerts:
             user = alert.user
             if user is None:

@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import html
 import logging
 from typing import Any, Awaitable, Callable
 
@@ -52,6 +53,23 @@ class AuthMiddleware(BaseMiddleware):
                 session,
                 {"id": tg_user.id, "username": tg_user.username, "first_name": tg_user.first_name},
             )
+            # Забаненный пользователь «невидим»: хендлеры не вызываются,
+            # на любое сообщение он получает причину бана.
+            if getattr(db_user, "is_banned", False):
+                reason = getattr(db_user, "ban_reason", None) or "нарушение правил"
+                safe_reason = html.escape(reason, quote=False)
+                message = getattr(event, "message", None)
+                if message is not None:
+                    try:
+                        await message.answer(
+                            f"⛔ <b>Доступ заблокирован.</b>\nПричина: «{safe_reason}»"
+                        )
+                    except Exception:  # noqa: BLE001 — показ причины не критичен
+                        logger.warning("Ban notice failed for %s", tg_user.id, exc_info=True)
+                callback = getattr(event, "callback_query", None)
+                if callback is not None:
+                    await callback.answer(f"Заблокирован: {reason}", show_alert=True)
+                return
             data["db_user"] = db_user
             data["session"] = session
             return await handler(event, data)

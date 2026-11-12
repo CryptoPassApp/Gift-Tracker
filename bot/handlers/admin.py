@@ -6,6 +6,7 @@ admin:broadcast -> бот ждет сообщение -> копирует его
 """
 from __future__ import annotations
 
+import html
 import logging
 import re
 
@@ -23,6 +24,8 @@ from bot.handlers.ui import edit_screen
 from bot.keyboards import cancel_kb
 from bot.models import Alert, Payment, SnipeSignal, User
 from bot.services.admin_stats import (
+    active_pro_users,
+    ban_user,
     grant_pro,
     grant_pro_days,
     normalize_manual_plan,
@@ -30,6 +33,7 @@ from bot.services.admin_stats import (
     revenue_by_day,
     revenue_by_plan,
     revoke_pro,
+    unban_user,
 )
 from bot.services.notifier import Notifier
 
@@ -66,6 +70,21 @@ _REVOKE_USAGE = (
     "Работает только по тем, кто хотя бы раз писал боту."
 )
 
+_BAN_USAGE = (
+    "⛔ <b>Бан пользователя</b>\n"
+    "Формат: <code>/ban &lt;telegram_id&gt; &lt;причина&gt;</code>\n"
+    "Пример: <code>/ban 123456789 Спам и попытка скама</code>\n"
+    "Пользователь получает сообщение с причиной, его сообщения\n"
+    "и запросы к Mini App отсекаются, пуши не доставляются.\n"
+    "Разбан: <code>/unban &lt;telegram_id&gt;</code>"
+)
+
+_UNBAN_USAGE = (
+    "✅ <b>Разбан</b>\n"
+    "Формат: <code>/unban &lt;telegram_id&gt;</code>\n"
+    "Снимает бан, возвращает доступ к боту и Mini App."
+)
+
 
 def _human_days(days: float) -> str:
     """«30 дней» / «1 день» / «12 ч» — человекочитаемый срок для ответа."""
@@ -80,6 +99,16 @@ def _human_days(days: float) -> str:
     if abs(hours - round(hours)) < 1e-9:
         return f"{round(hours)} ч"
     return f"{days:g} дн."
+
+
+def _esc(text: str | None) -> str:
+    """HTML-экранирование пользовательского текста для parse_mode=HTML.
+
+    Без экранирования `<` в причине бана/сообщении рвет разметку:
+    TelegramBadRequest → исключение в хендлере → откат сессии БД,
+    и сам бан/выдача PRO теряются вместе с ответом админу.
+    """
+    return html.escape(text or "", quote=False)
 
 
 # ----------------------------------------------------------------------
@@ -191,7 +220,42 @@ async def cb_admin_stats(callback: CallbackQuery, session: AsyncSession, db_user
         "👤 Выдать PRO: /grant &lt;telegram_id&gt; &lt;month|lifetime|дней&gt;\n"
         "🚫 Забрать PRO: /revoke &lt;telegram_id&gt;"
     )
-    await callback.message.edit_text(text, reply_markup=await admin_panel_with_badge(session))
+    # На экране статистики кнопка «Статистика» не нужна (она и открыла экран).
+    await callback.message.edit_text(
+        text, reply_markup=await admin_panel_with_badge(session, include_stats=False)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:pro_list")
+async def cb_admin_pro_list(callback: CallbackQuery, session: AsyncSession, db_user: User) -> None:
+    """Текстовый список активных PRO-подписчиков: юз + telegram_id + срок."""
+    if not _is_admin(db_user.telegram_id):
+        await callback.answer("⛔ Только для админов", show_alert=True)
+        return
+    if callback.message is None:
+        await callback.answer()
+        return
+
+    users = await active_pro_users(session)
+    if not users:
+        text = "👑 <b>PRO-подписчики</b>\n\nАктивных подписок сейчас нет."
+    else:
+        lines = []
+        for i, u in enumerate(users, 1):
+            who = f"@{u.username}" if u.username else "без юза"
+            if u.pro_expires_at is None or u.pro_expires_at.year == 9999:
+                expires = "навсегда"
+            else:
+                expires = u.pro_expires_at.strftime("%d.%m.%Y")
+            lines.append(f"{i}. {who} · <code>{u.telegram_id}</code> · до {expires}")
+        text = f"👑 <b>PRO-подписчики</b> ({len(users)}):\n\n" + "\n".join(lines[:80])
+        if len(users) > 80:
+            text += f"\n… и ещё {len(users) - 80}"
+
+    await callback.message.edit_text(
+        text, reply_markup=await admin_panel_with_badge(session, include_pro_list=False)
+    )
     await callback.answer()
 
 
@@ -265,7 +329,6 @@ async def cmd_grant(message: Message, session: AsyncSession, db_user: User) -> N
         expires = user.pro_expires_at.strftime("%d.%m.%Y")
     else:
         expires = "—"
-    plan_label = "Lifetime" if normalized == "pro_lifetime" else f"{settings.PRO_MONTH_DAYS} дней"
 
     await message.answer(
         "✅ <b>PRO выдан</b>\n"
@@ -346,6 +409,125 @@ async def cmd_revoke(message: Message, session: AsyncSession, db_user: User) -> 
 
 
 # ----------------------------------------------------------------------
+# Бан / разбан
+# ----------------------------------------------------------------------
+@router.callback_query(F.data == "admin:ban")
+async def cb_admin_ban(callback: CallbackQuery, db_user: User) -> None:
+    """Кнопка «Бан / Разбан»: показывает формат команд."""
+    if not _is_admin(db_user.telegram_id):
+        await callback.answer("⛔ Только для админов", show_alert=True)
+        return
+    if callback.message is not None:
+        await callback.message.answer(_BAN_USAGE)
+    await callback.answer()
+
+
+@router.message(Command("ban"))
+async def cmd_ban(message: Message, session: AsyncSession, db_user: User) -> None:
+    """``/ban <telegram_id> <причина>`` — блокировка доступа к боту и Mini App."""
+    if not _is_admin(db_user.telegram_id):
+        await message.answer("⛔ Раздел только для администраторов.")
+        return
+
+    parts = (message.text or "").split(maxsplit=2)
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer(_BAN_USAGE)
+        return
+
+    telegram_id = int(parts[1])
+    reason = parts[2].strip() if len(parts) > 2 else "нарушение правил"
+    try:
+        user, was_banned = await ban_user(session, telegram_id, reason)
+    except ValueError as exc:
+        await message.answer(f"⚠️ Не получилось: {_esc(str(exc))}.")
+        return
+
+    ban_reply = (
+        "⛔ <b>Пользователь забанен</b>\n"
+        f"👤 Telegram ID: <code>{user.telegram_id}</code>\n"
+        f"📝 Причина: <b>{_esc(user.ban_reason)}</b>\n"
+        + (
+            "Бан продлен/обновлен."
+            if was_banned
+            else "Сообщения и пуши ему больше не доставляются.\n"
+            "Разбан: /unban &lt;telegram_id&gt;"
+        )
+    )
+    # Ответ админу не должен ломать уже примененный бан: любая ошибка
+    # отправки здесь откатила бы сессию вместе с записью в БД.
+    try:
+        await message.answer(ban_reply)
+    except Exception:  # noqa: BLE001 — бан уже применен, ответ админу вторичен
+        logger.exception("Ban confirmation failed for user=%s", telegram_id)
+    logger.info(
+        "Admin %s banned user=%s reason=%s (was_banned=%s)",
+        db_user.telegram_id,
+        telegram_id,
+        user.ban_reason,
+        was_banned,
+    )
+
+    # Сообщаем причину — чтобы человек знал, за что.
+    try:
+        await message.bot.send_message(
+            user.telegram_id,
+            "⛔ <b>Вы заблокированы в боте.</b>\n"
+            f"Причина: «{_esc(user.ban_reason)}»\n"
+            "\n"
+            "Если считаешь это ошибкой — напиши администратору.",
+        )
+    except Exception:  # noqa: BLE001 — уведомление не ломает бан
+        logger.warning("Ban notify failed for %s", user.telegram_id, exc_info=True)
+
+
+@router.message(Command("unban"))
+async def cmd_unban(message: Message, session: AsyncSession, db_user: User) -> None:
+    """``/unban <telegram_id>`` — снять бан, вернуть доступ."""
+    if not _is_admin(db_user.telegram_id):
+        await message.answer("⛔ Раздел только для администраторов.")
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer(_UNBAN_USAGE)
+        return
+
+    telegram_id = int(parts[1])
+    try:
+        user, previous_reason = await unban_user(session, telegram_id)
+    except ValueError as exc:
+        await message.answer(f"⚠️ Не получилось: {_esc(str(exc))}.")
+        return
+
+    unban_reply = (
+        "✅ <b>Бан снят</b>\n"
+        f"👤 Telegram ID: <code>{user.telegram_id}</code>\n"
+        f"📝 Была причина: <b>{_esc(previous_reason) or '—'}</b>\n"
+        "Доступ к боту и Mini App восстановлен."
+    )
+    # Разбан уже применен — ошибка отправки не должна его откатить.
+    try:
+        await message.answer(unban_reply)
+    except Exception:  # noqa: BLE001 — разбан уже применен, ответ админу вторичен
+        logger.exception("Unban confirmation failed for user=%s", telegram_id)
+    logger.info(
+        "Admin %s unbanned user=%s (was: %s)",
+        db_user.telegram_id,
+        telegram_id,
+        previous_reason,
+    )
+
+    try:
+        await message.bot.send_message(
+            user.telegram_id,
+            "✅ <b>Вы разблокированы.</b>\n"
+            "Доступ к боту и Mini App восстановлен — добро пожаловать обратно!",
+        )
+    except Exception:  # noqa: BLE001 — уведомление не ломает разбан
+        logger.warning("Unban notify failed for %s", user.telegram_id, exc_info=True)
+
+
+# ----------------------------------------------------------------------
 # Рассылка (FSM)
 # ----------------------------------------------------------------------
 @router.callback_query(F.data == "admin:broadcast")
@@ -384,7 +566,11 @@ async def process_broadcast(
         await message.answer("⚠️ Рассылка недоступна, попробуй позже.")
         return
 
-    users = list((await session.execute(select(User))).scalars())
+    users = [
+        u
+        for u in (await session.execute(select(User))).scalars()
+        if not getattr(u, "is_banned", False)  # забаненные рассылки не получают
+    ]
     await state.clear()
     await message.answer(f"📣 Рассылка запущена: {len(users)} получателей…")
 

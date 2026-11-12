@@ -140,16 +140,29 @@ def alerts_screen_kb(
     return builder.as_markup()
 
 
-def admin_panel_kb(open_dialogs: int | None = None) -> InlineKeyboardMarkup:
-    """Админ-панель; ``open_dialogs`` — бейдж открытых диалогов поддержки."""
+def admin_panel_kb(
+    open_dialogs: int | None = None,
+    *,
+    include_stats: bool = True,
+    include_pro_list: bool = True,
+) -> InlineKeyboardMarkup:
+    """Админ-панель; ``open_dialogs`` — бейдж открытых диалогов поддержки.
+
+    ``include_stats`` / ``include_pro_list`` гасят кнопку открытого экрана:
+    кнопка «Статистика» на экране статистики — мёртвый груз (баг 12.11).
+    """
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="📊 Статистика", callback_data="admin:stats"))
+    if include_stats:
+        builder.row(InlineKeyboardButton(text="📊 Статистика", callback_data="admin:stats"))
     label = "💬 Сообщения от людей"
     if open_dialogs:
         label += f" · {open_dialogs}"
     builder.row(InlineKeyboardButton(text=label, callback_data="admin:support"))
+    if include_pro_list:
+        builder.row(InlineKeyboardButton(text="👑 PRO-подписчики", callback_data="admin:pro_list"))
     builder.row(InlineKeyboardButton(text="👤 Выдать PRO", callback_data="admin:grant"))
     builder.row(InlineKeyboardButton(text="🚫 Отозвать PRO", callback_data="admin:revoke"))
+    builder.row(InlineKeyboardButton(text="⛔ Бан / Разбан", callback_data="admin:ban"))
     builder.row(InlineKeyboardButton(text="📣 Рассылка всем", callback_data="admin:broadcast"))
     builder.row(InlineKeyboardButton(text="« В меню", callback_data="menu:start"))
     return builder.as_markup()

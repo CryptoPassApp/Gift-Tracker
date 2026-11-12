@@ -75,6 +75,8 @@ def _patch_schema(sync_connection) -> None:  # noqa: ANN001 — sqlalchemy callb
             "min_discount": "ALTER TABLE users ADD COLUMN min_discount REAL DEFAULT 0 NOT NULL",
             "referred_by": "ALTER TABLE users ADD COLUMN referred_by INTEGER",
             "referral_code": "ALTER TABLE users ADD COLUMN referral_code VARCHAR(16)",
+            "is_banned": "ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0 NOT NULL",
+            "ban_reason": "ALTER TABLE users ADD COLUMN ban_reason VARCHAR(256)",
         },
     }
     for table, columns in migrations.items():

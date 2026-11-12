@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.routes import alerts, demo, gifts, internal, user
@@ -151,6 +154,39 @@ def create_app(settings: "Settings | None" = None) -> FastAPI:
         if request.method == "OPTIONS":
             response.headers["Access-Control-Allow-Private-Network"] = "true"
         return response
+
+    # Публичные /api/demo/* доступны без авторизации (витрина) — простой
+    # per-IP лимит, чтобы их нельзя было долбить бесконечно (аудит 28.10).
+    _RATE_LIMIT = 30
+    _RATE_WINDOW = 60.0
+    _rate_buckets: dict[str, deque] = {}
+
+    @app.middleware("http")
+    async def demo_rate_limit_middleware(request: Request, call_next):
+        if request.url.path.startswith("/api/demo"):
+            xff = request.headers.get("x-forwarded-for", "")
+            ip = xff.split(",")[-1].strip() if xff else (
+                request.client.host if request.client else "?"
+            )
+            now = time.monotonic()
+            bucket = _rate_buckets.setdefault(ip, deque())
+            while bucket and now - bucket[0] > _RATE_WINDOW:
+                bucket.popleft()
+            if len(bucket) >= _RATE_LIMIT:
+                logger.warning("Rate limit hit for %s on %s", ip, request.url.path)
+                return JSONResponse(
+                    {"detail": "rate limit exceeded, try later"}, status_code=429
+                )
+            bucket.append(now)
+            if len(_rate_buckets) > 4096:  # защита памяти от мусорных IP
+                stale = [
+                    k
+                    for k, v in _rate_buckets.items()
+                    if not v or now - v[-1] > _RATE_WINDOW
+                ]
+                for k in stale:
+                    _rate_buckets.pop(k, None)
+        return await call_next(request)
 
     app.include_router(gifts.router, prefix="/api")
     app.include_router(alerts.router, prefix="/api")

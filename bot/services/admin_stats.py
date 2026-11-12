@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -169,7 +169,70 @@ async def revoke_pro(
     return user, previous
 
 
+async def active_pro_users(session: AsyncSession) -> list[User]:
+    """Активные PRO-подписчики: флаг поднят и срок не истек (или lifetime)."""
+    now = datetime.utcnow()
+    stmt = (
+        select(User)
+        .where(
+            User.is_pro.is_(True),
+            or_(User.pro_expires_at.is_(None), User.pro_expires_at > now),
+        )
+        .order_by(User.pro_expires_at.desc().nullslast(), User.id.desc())
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def ban_user(
+    session: AsyncSession,
+    telegram_id: int,
+    reason: str,
+) -> tuple[User, bool]:
+    """Банит пользователя: сообщения, пуши и Mini App API отсекаются.
+
+    Возвращает ``(user, был_ли_уже_забанен)``. Бан не трогает PRO-статус —
+    он только блокирует доступ; отзыв PRO делается отдельно через revoke_pro.
+
+    Raises:
+        ValueError: пользователь не найден в БД (банить некого).
+    """
+    if telegram_id <= 0:
+        raise ValueError("telegram_id must be positive")
+    stmt = select(User).where(User.telegram_id == telegram_id)
+    user = (await session.execute(stmt)).scalar_one_or_none()
+    if user is None:
+        raise ValueError("user not found")
+    was_banned = bool(user.is_banned)
+    user.is_banned = True
+    user.ban_reason = (reason or "").strip()[:256] or "нарушение правил"
+    await session.flush()
+    return user, was_banned
+
+
+async def unban_user(session: AsyncSession, telegram_id: int) -> tuple[User, str | None]:
+    """Снимает бан; возвращает ``(user, прежняя причина)``.
+
+    Raises:
+        ValueError: пользователь не найден или не был забанен.
+    """
+    if telegram_id <= 0:
+        raise ValueError("telegram_id must be positive")
+    stmt = select(User).where(User.telegram_id == telegram_id)
+    user = (await session.execute(stmt)).scalar_one_or_none()
+    if user is None:
+        raise ValueError("user not found")
+    if not user.is_banned:
+        raise ValueError("user is not banned")
+    previous_reason = user.ban_reason
+    user.is_banned = False
+    user.ban_reason = None
+    await session.flush()
+    return user, previous_reason
+
+
 __all__ = [
+    "active_pro_users",
+    "ban_user",
     "grant_pro",
     "grant_pro_days",
     "normalize_manual_plan",
@@ -177,4 +240,5 @@ __all__ = [
     "revenue_by_day",
     "revenue_by_plan",
     "revoke_pro",
+    "unban_user",
 ]
